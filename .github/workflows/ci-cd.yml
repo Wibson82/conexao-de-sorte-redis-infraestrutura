@@ -1,0 +1,193 @@
+name: 🔴 Redis Infrastructure - CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    paths: ['docker-compose.yml', 'scripts/**', '.github/workflows/**', 'README.md']
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Destino do deploy'
+        required: false
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+env:
+  SERVICE_NAME: redis-infrastructure
+  TZ: America/Sao_Paulo
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    name: ✅ Validate Configuration
+    environment: production
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate docker-compose.yml
+        run: |
+          if [ -f docker-compose.yml ]; then
+            echo "✅ docker-compose.yml exists"
+            docker-compose config -q
+            echo "✅ docker-compose.yml is valid"
+          else
+            echo "❌ docker-compose.yml not found"
+            exit 1
+          fi
+          
+      - name: Validate environment template
+        run: |
+          if [ -f .env.example ]; then
+            echo "✅ .env.example exists"
+          else
+            echo "⚠️ .env.example not found - creating template"
+            cat > .env.example << 'EOF'
+          # Redis Infrastructure Configuration
+          REDIS_PASSWORD=your-secure-redis-password-here
+          EOF
+          fi
+          
+      - name: Security scan
+        run: |
+          echo "🔍 Scanning for hardcoded secrets..."
+          if grep -r "password.*=" . --exclude-dir=.git --exclude-dir=node_modules; then
+            echo "⚠️ Found potential hardcoded passwords - review required"
+          else
+            echo "✅ No hardcoded passwords found"
+          fi
+          
+      - name: Validate Redis configuration
+        run: |
+          echo "🔍 Validating Redis configuration..."
+          if grep -q "requirepass" docker-compose.yml; then
+            echo "✅ Password protection enabled"
+          else
+            echo "❌ Redis password protection not configured"
+            exit 1
+          fi
+          
+          if grep -q "appendonly yes" docker-compose.yml; then
+            echo "✅ Redis persistence (AOF) enabled"
+          else
+            echo "⚠️ Redis persistence not explicitly configured"
+          fi
+
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    name: 🚀 Deploy Redis Infrastructure
+    environment: production
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+            
+      - name: Load Redis secrets
+        uses: Azure/get-keyvault-secrets@v1
+        with:
+          keyvault: ${{ secrets.AZURE_KEYVAULT_NAME }}
+          secrets: |
+            REDIS-PASSWORD
+        id: redis-secrets
+        
+      - name: Create production .env
+        run: |
+          echo "REDIS_PASSWORD=${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" > .env
+          echo "✅ Environment file created with secure password"
+          
+      - name: Deploy Redis
+        run: |
+          echo "🔴 Deploying Redis Infrastructure..."
+          echo "Password configured from Azure Key Vault"
+          
+          # Verificar se rede existe
+          if ! docker network inspect conexao-network > /dev/null 2>&1; then
+            echo "🔧 Creating conexao-network..."
+            docker network create conexao-network
+          fi
+          
+          # Deploy Redis
+          docker-compose up -d
+          
+          # Aguardar Redis inicializar
+          echo "⏳ Waiting for Redis to be ready..."
+          sleep 15
+          
+      - name: Health check
+        run: |
+          echo "🔍 Performing Redis health check..."
+          
+          # Verificar se container está rodando
+          if docker ps | grep -q conexao-redis; then
+            echo "✅ Redis container is running"
+          else
+            echo "❌ Redis container is not running"
+            docker-compose logs
+            exit 1
+          fi
+          
+          # Verificar conectividade
+          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" ping | grep -q "PONG"; then
+            echo "✅ Redis responding to ping"
+          else
+            echo "❌ Redis not responding"
+            exit 1
+          fi
+          
+          # Verificar persistência
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" BGREWRITEAOF
+          echo "✅ Redis AOF rewrite triggered"
+          
+      - name: Test Redis functionality
+        run: |
+          echo "🧪 Testing Redis functionality..."
+          
+          # Teste básico de set/get
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" SET test-key "deployment-test"
+          
+          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" GET test-key | grep -q "deployment-test"; then
+            echo "✅ Redis SET/GET working"
+          else
+            echo "❌ Redis SET/GET failed"
+            exit 1
+          fi
+          
+          # Limpar teste
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" DEL test-key
+          
+      - name: Update documentation
+        run: |
+          echo "📝 Updating deployment status..."
+          echo "Last deployed: $(date)" >> deployment-history.md
+          echo "Commit: ${{ github.sha }}" >> deployment-history.md
+          echo "✅ Redis Infrastructure successfully deployed"
+          
+      - name: Notify deployment
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Redis Infrastructure deployment successful"
+            echo "🔗 Redis available at: conexao-redis:6379"
+            echo "🔍 Monitor with: docker logs -f conexao-redis"
+          else
+            echo "❌ Redis Infrastructure deployment failed"
+            docker-compose logs
+          fi
