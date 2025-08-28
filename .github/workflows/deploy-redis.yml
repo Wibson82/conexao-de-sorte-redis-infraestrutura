@@ -1,0 +1,249 @@
+name: 🗄️ Redis Infrastructure - Deploy Pipeline
+
+on:
+  push:
+    branches: [ main ]
+    paths: ['docker-compose.yml', '.env.example', 'README.md', '.github/workflows/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Destino do deploy'
+        required: false
+        default: 'production'
+        type: choice
+        options: [production]
+
+env:
+  SERVICE_NAME: redis-infrastructure
+  TZ: America/Sao_Paulo
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  validate-compose:
+    runs-on: ubuntu-latest
+    name: 🔍 Validate Docker Compose
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Validate docker-compose.yml syntax
+        run: |
+          echo "🔍 Validating docker-compose.yml syntax..."
+          REDIS_PASSWORD=test docker-compose config
+          echo "✅ Docker Compose file is valid!"
+          
+      - name: Check Redis image availability
+        run: |
+          echo "🔍 Checking Redis image availability..."
+          docker pull redis:7-alpine
+          echo "✅ Redis image is available!"
+
+  deploy-production:
+    needs: validate-compose
+    runs-on: [self-hosted, hostinger-runner]
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    name: 🌟 Deploy Redis to Production (self-hosted)
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Load Azure Key Vault secrets
+        run: |
+          set -euo pipefail
+          # Extract vault name from AZURE_KEYVAULT_ENDPOINT
+          VAULT_ENDPOINT="${{ secrets.AZURE_KEYVAULT_ENDPOINT }}"
+          if [[ "$VAULT_ENDPOINT" =~ https://([^.]+)\.vault\.azure\.net ]]; then
+            VAULT="${BASH_REMATCH[1]}"
+          else
+            echo "ERROR: Invalid AZURE_KEYVAULT_ENDPOINT format: $VAULT_ENDPOINT" >&2
+            echo "Expected format: https://vault-name.vault.azure.net/" >&2
+            exit 1
+          fi
+          
+          echo "Loading secrets from Azure Key Vault: $VAULT (endpoint: $VAULT_ENDPOINT)" >&2
+          echo "VAULT=$VAULT" >> "$GITHUB_ENV"
+
+          get() { 
+            echo "Fetching secret: $1" >&2
+            SECRET_VALUE=$(az keyvault secret show --vault-name "$VAULT" --name "$1" --query value -o tsv 2>/dev/null)
+            if [ $? -ne 0 ] || [ -z "$SECRET_VALUE" ]; then
+              echo "ERROR: Secret $1 not found in Azure Key Vault $VAULT" >&2
+              echo "Available secrets in vault:" >&2
+              az keyvault secret list --vault-name "$VAULT" --query '[].name' -o tsv >&2
+              exit 1
+            fi
+            echo "$SECRET_VALUE"
+          }
+
+          # Redis secrets
+          echo "REDIS_HOST=$(get conexao-de-sorte-redis-host)" >> $GITHUB_ENV
+          echo "REDIS_PORT=$(get conexao-de-sorte-redis-port)" >> $GITHUB_ENV
+          echo "REDIS_PASSWORD=$(get conexao-de-sorte-redis-password)" >> $GITHUB_ENV
+          echo "REDIS_DATABASE=$(get conexao-de-sorte-redis-database)" >> $GITHUB_ENV
+          
+          echo "Success: Azure Key Vault secrets loaded successfully" >&2
+
+      - name: Garantir rede Docker
+        run: |
+          echo "🔍 Checking Docker network..."
+          if ! docker network inspect conexao-network >/dev/null 2>&1; then
+            echo "📢 Creating conexao-network..."
+            docker network create conexao-network
+          else
+            echo "✅ conexao-network already exists"
+          fi
+
+      - name: Deploy Redis Infrastructure
+        run: |
+          set -euo pipefail
+          
+          echo "🚀 Deploying Redis infrastructure..."
+          
+          # Create .env file from Azure Key Vault secrets
+          echo "📝 Creating .env file from Azure Key Vault secrets..."
+          cat > .env << EOF
+          REDIS_PASSWORD=${REDIS_PASSWORD}
+          TZ=${TZ}
+          EOF
+          
+          # Pull latest Redis image
+          echo "📥 Pulling latest Redis image..."
+          docker-compose pull
+          
+          # Check if Redis is already running
+          if docker ps -q -f name=conexao-redis | grep -q .; then
+            echo "🛑 Stopping existing Redis container..."
+            docker-compose down
+            
+            # Create backup of existing data
+            echo "📦 Creating backup of Redis data..."
+            if docker volume ls | grep -q redis-data; then
+              BACKUP_NAME="redis-data-backup-$(date +%Y%m%d-%H%M%S)"
+              docker run --rm -v redis-data:/source -v /tmp:/backup alpine tar czf /backup/${BACKUP_NAME}.tar.gz -C /source .
+              echo "✅ Backup created: /tmp/${BACKUP_NAME}.tar.gz"
+            fi
+          fi
+          
+          # Start Redis
+          echo "▶️ Starting Redis container..."
+          docker-compose up -d
+          
+          # Wait for Redis to be ready
+          echo "⏳ Waiting for Redis to be ready..."
+          sleep 15
+          
+          # Health check
+          echo "🔍 Performing Redis health check..."
+          for i in $(seq 1 10); do
+            echo "⏳ Health check attempt $i/10..."
+            if docker exec conexao-redis redis-cli -a "${REDIS_PASSWORD}" ping | grep -q PONG; then
+              echo "✅ Redis is healthy and responding!"
+              break
+            fi
+            
+            if [ "$i" -eq 10 ]; then
+              echo "❌ Redis health check failed after 10 attempts"
+              echo "📋 Redis container logs (last 50 lines):"
+              docker logs conexao-redis --tail 50 || true
+              echo "📊 Container status:"
+              docker ps -a --filter name=conexao-redis || true
+              echo "🔍 Container health status:"
+              docker inspect conexao-redis --format='{{json .State.Health}}' || true
+              exit 1
+            fi
+            sleep 10
+          done
+          
+          # Test Redis functionality
+          echo "🧪 Testing Redis functionality..."
+          docker exec conexao-redis redis-cli -a "${REDIS_PASSWORD}" set test-key "deployment-$(date +%Y%m%d-%H%M%S)"
+          TEST_VALUE=$(docker exec conexao-redis redis-cli -a "${REDIS_PASSWORD}" get test-key)
+          echo "📋 Test value stored and retrieved: ${TEST_VALUE}"
+          docker exec conexao-redis redis-cli -a "${REDIS_PASSWORD}" del test-key
+          
+          # Display Redis info
+          echo "📊 Redis information:"
+          docker exec conexao-redis redis-cli -a "${REDIS_PASSWORD}" info server | head -10
+          
+          # Clean up .env file for security
+          echo "🧹 Cleaning up .env file..."
+          rm -f .env
+          
+          echo "✅ Redis infrastructure deployment completed successfully!"
+          echo "🔗 Redis is now available at: conexao-redis:6379 (internal network)"
+
+  verify-microservice-connectivity:
+    needs: deploy-production
+    runs-on: [self-hosted, hostinger-runner]
+    name: 🔗 Verify Microservice Connectivity
+    steps:
+      - name: Test connectivity from microservices network
+        run: |
+          echo "🔍 Testing Redis connectivity from microservices perspective..."
+          
+          # Check if any microservices are running to test connectivity
+          MICROSERVICES=(
+            "resultados-microservice"
+            "autenticacao-microservice"
+            "batepapo-microservice"
+            "notificacoes-microservice"
+            "auditoria-compliance-microservice"
+          )
+          
+          for service in "${MICROSERVICES[@]}"; do
+            if docker ps -q -f name="$service" | grep -q .; then
+              echo "📋 Testing connectivity from $service..."
+              # Test if the microservice can reach Redis
+              if docker exec "$service" sh -c "timeout 5 nc -z conexao-redis 6379" 2>/dev/null; then
+                echo "✅ $service can reach Redis"
+              else
+                echo "⚠️ $service cannot reach Redis (may be normal if Redis auth is required)"
+              fi
+            else
+              echo "ℹ️ $service is not running, skipping connectivity test"
+            fi
+          done
+          
+          echo "✅ Connectivity verification completed"
+
+  notify:
+    runs-on: ubuntu-latest
+    name: 📢 Notification
+    if: always()
+    needs: [validate-compose, deploy-production, verify-microservice-connectivity]
+    steps:
+      - uses: 8398a7/action-slack@v3
+        if: always() && env.SLACK_WEBHOOK_URL != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: ${{ job.status }}
+          channel: '#ci-cd-notifications'
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          custom_payload: |
+            {
+              "username": "GitHub Actions",
+              "icon_emoji": ":file_cabinet:",
+              "attachments": [{
+                "color": "${{ job.status }}" == "success" ? "good" : "${{ job.status }}" == "failure" ? "danger" : "warning",
+                "fields": [{
+                  "title": "🗄️ Redis Infrastructure",
+                  "value": "Status: ${{ job.status }}\nBranch: ${{ github.ref_name }}\nCommit: ${{ github.sha }}",
+                  "short": true
+                }]
+              }]
+            }
