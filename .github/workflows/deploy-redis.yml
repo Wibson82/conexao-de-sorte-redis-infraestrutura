@@ -34,7 +34,7 @@ jobs:
       - name: Validate docker-compose.yml syntax
         run: |
           echo "🔍 Validating docker-compose.yml syntax..."
-          REDIS_PASSWORD=test docker-compose config
+          REDIS_PASSWORD=test docker compose config
           echo "✅ Docker Compose file is valid!"
           
       - name: Check Redis image availability
@@ -122,12 +122,12 @@ jobs:
           
           # Pull latest Redis image
           echo "📥 Pulling latest Redis image..."
-          docker-compose pull
+          docker compose pull
           
           # Check if Redis is already running
           if docker ps -q -f name=conexao-redis | grep -q .; then
             echo "🛑 Stopping existing Redis container..."
-            docker-compose down
+            docker compose down
             
             # Create backup of existing data
             echo "📦 Creating backup of Redis data..."
@@ -140,7 +140,7 @@ jobs:
           
           # Start Redis
           echo "▶️ Starting Redis container..."
-          docker-compose up -d
+          docker compose up -d
           
           # Wait for Redis to be ready
           echo "⏳ Waiting for Redis to be ready..."
