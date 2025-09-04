@@ -45,7 +45,7 @@ jobs:
 
   deploy-production:
     needs: validate-compose
-    runs-on: [self-hosted, redis-infrastructure-service]
+    runs-on: [self-hosted, conexao-de-sorte-redis-infrastructure-service]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
     name: 🌟 Deploy Redis to Production (self-hosted)
     permissions:
@@ -185,7 +185,7 @@ jobs:
 
   verify-microservice-connectivity:
     needs: deploy-production
-    runs-on: [self-hosted, redis-infrastructure-service]
+    runs-on: [self-hosted, conexao-de-sorte-redis-infrastructure-service]
     name: 🔗 Verify Microservice Connectivity
     steps:
       - name: Test connectivity from microservices network
