@@ -16,7 +16,7 @@ on:
         options: [production, staging]
 
 env:
-  SERVICE_NAME: redis-infrastructure
+  SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
   TZ: America/Sao_Paulo
 
 concurrency:
@@ -191,3 +191,9 @@ jobs:
             echo "❌ Redis Infrastructure deployment failed"
             docker-compose logs
           fi
+      - name: Print runner host
+        run: |
+          echo "Host: $(hostname)"
+          uname -a
+      - name: Check GitHub API
+        run: curl -s https://api.github.com/rate_limit | head -n 5
