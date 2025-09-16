@@ -25,9 +25,8 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: self-hosted  # Usar self-hosted runner para melhor segurança
+    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
     name: ✅ Validate Configuration
-    environment: production
     permissions:
       id-token: write  # Para OIDC
       contents: read
@@ -85,9 +84,8 @@ jobs:
 
   deploy:
     needs: validate
-    runs-on: self-hosted  # Usar self-hosted runner para melhor segurança
+    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🚀 Deploy Redis Infrastructure
-    environment: production
     permissions:
       id-token: write  # Para OIDC
       contents: read
@@ -111,12 +109,12 @@ jobs:
         with:
           keyvault: ${{ secrets.AZURE_KEYVAULT_NAME }}
           secrets: |
-            REDIS-PASSWORD
+            conexao-de-sorte-redis-password
         id: redis-secrets
         
       - name: Create production .env
         run: |
-          echo "REDIS_PASSWORD=${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" > .env
+          echo "REDIS_PASSWORD=${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" > .env
           echo "✅ Environment file created with secure password"
           
       - name: Deploy Redis
@@ -151,7 +149,7 @@ jobs:
           fi
           
           # Verificar conectividade
-          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" ping | grep -q "PONG"; then
+          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" ping | grep -q "PONG"; then
             echo "✅ Redis responding to ping"
           else
             echo "❌ Redis not responding"
@@ -159,7 +157,7 @@ jobs:
           fi
           
           # Verificar persistência
-          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" BGREWRITEAOF
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" BGREWRITEAOF
           echo "✅ Redis AOF rewrite triggered"
           
       - name: Test Redis functionality
@@ -167,9 +165,9 @@ jobs:
           echo "🧪 Testing Redis functionality..."
           
           # Teste básico de set/get
-          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" SET test-key "deployment-test"
-          
-          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" GET test-key | grep -q "deployment-test"; then
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" SET test-key "deployment-test"
+
+          if docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" GET test-key | grep -q "deployment-test"; then
             echo "✅ Redis SET/GET working"
           else
             echo "❌ Redis SET/GET failed"
@@ -177,7 +175,7 @@ jobs:
           fi
           
           # Limpar teste
-          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.REDIS-PASSWORD }}" DEL test-key
+          docker exec conexao-redis redis-cli -a "${{ steps.redis-secrets.outputs.conexao-de-sorte-redis-password }}" DEL test-key
           
       - name: Update documentation
         run: |
