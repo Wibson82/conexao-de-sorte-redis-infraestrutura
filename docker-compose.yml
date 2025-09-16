@@ -2,13 +2,12 @@
 
 services:
   redis:
-    image: redis:8.2.2
-    container_name: conexao-redis
+    image: redis:8.2.2-alpine
     hostname: conexao-redis
     restart: unless-stopped
     command: >
       sh -c 'redis-server
-      --requirepass "${REDIS_PASSWORD?A senha do Redis não foi definida na variável REDIS_PASSWORD}"
+      --requirepass "$$(cat /run/secrets/REDIS_PASSWORD)"
       --appendonly yes
       --bind 0.0.0.0
       --port 6379
@@ -18,17 +17,22 @@ services:
     ports:
       - "6379:6379"  # Expor para outros microsserviços
     networks:
-      - conexao-network
       - conexao-network-swarm
     volumes:
       - redis-data:/data
+    secrets:
+      - REDIS_PASSWORD
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping || exit 1"]
+      test: ["CMD", "sh", "-c", "redis-cli -a \"$$(cat /run/secrets/REDIS_PASSWORD)\" ping || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
     deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
       resources:
         limits:
           memory: 300M
@@ -36,23 +40,46 @@ services:
         reservations:
           memory: 128M
           cpus: '0.25'
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     labels:
       org.opencontainers.image.title: "Conexão de Sorte Redis"
       org.opencontainers.image.description: "Redis Cache para microserviços"
       org.opencontainers.image.vendor: "Conexão de Sorte"
-      org.opencontainers.image.version: "8.2.2"
+      org.opencontainers.image.version: "8.2.2-alpine"
       conexao.service.name: "redis"
       conexao.service.type: "infrastructure"
+      # Traefik labels para monitoramento (opcional)
+      traefik.enable: "false"
 
+# ============================================================================
+# SECRETS CONFIGURATION
+# ============================================================================
+secrets:
+  REDIS_PASSWORD:
+    external: true
+    name: REDIS_PASSWORD
+
+# ============================================================================
+# VOLUMES CONFIGURATION
+# ============================================================================
 volumes:
   redis-data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/docker/volumes/redis-data/_data
 
+# ============================================================================
+# NETWORKS CONFIGURATION
+# ============================================================================
 networks:
-  conexao-network:
-    name: conexao-network
-    external: true
-  # Compatibilidade com projetos que usam conexao-network-swarm
   conexao-network-swarm:
     name: conexao-network-swarm
     external: true
+    driver: overlay
+    attachable: true
