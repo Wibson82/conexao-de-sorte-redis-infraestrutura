@@ -69,10 +69,6 @@ secrets:
 volumes:
   redis-data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /var/lib/docker/volumes/redis-data/_data
 
 # ============================================================================
 # NETWORKS CONFIGURATION

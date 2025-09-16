@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   smoke:
-    runs-on: [self-hosted, linux, x64, production, conexao-de-sorte-redis-infraestrutura-service]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     steps:
       - name: Print runner host
         run: |

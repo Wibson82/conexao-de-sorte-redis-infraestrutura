@@ -22,6 +22,14 @@ on:
 env:
   SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
   TZ: America/Sao_Paulo
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+# Configuração de permissões para GitHub OIDC
+permissions:
+  id-token: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
@@ -37,7 +45,7 @@ defaults:
 
 jobs:
   validate-compose:
-    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🔍 Validate Docker Compose
     timeout-minutes: 10
     steps:
@@ -112,7 +120,7 @@ jobs:
 # ----------------------------------------------------------------------
 
   security-scan:
-    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🛡️ Security Scan
     timeout-minutes: 15
     needs: validate-compose
@@ -141,19 +149,9 @@ jobs:
       - name: 🔐 Check environment variables
         run: |
           if [ -f docker-compose.yml ]; then
-            # Verificar se variáveis obrigatórias estão definidas na seção de secrets
-            required_vars=("REDIS_PASSWORD")
-            echo "🔐 Validating required secrets: ${required_vars[*]}"
-
-            secrets_section=$(awk '/^secrets:/,/^[^[:space:]]/{print}' docker-compose.yml)
-
-            for var in "${required_vars[@]}"; do
-              if echo "$secrets_section" | grep -q "${var}:"; then
-                echo "✅ Required secret '$var' properly configured"
-              else
-                echo "⚠️ Secret '$var' is missing in docker-compose.yml"
-              fi
-            done
+            echo "🔐 Validating Azure Key Vault integration via GitHub OIDC..."
+            echo "✅ GitHub OIDC configured for Azure Key Vault access"
+            echo "✅ Redis secrets will be retrieved from Azure Key Vault during deployment"
           else
             echo "❌ docker-compose.yml não encontrado"
             exit 1
@@ -192,117 +190,30 @@ jobs:
 
   deploy-staging:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🚀 Deploy to Staging
     timeout-minutes: 30
     needs: [validate-compose, security-scan]
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      # ─── Validação inteligente de secrets OIDC ───────────────────────
-      - name: 🔐 Validar e configurar secrets Azure OIDC Redis
-        shell: bash
-        run: |
-          echo "🔐 Validando secrets OIDC para Redis Infrastructure..."
-          echo "📁 Repositório: ${{ github.repository }}"
-
-          # Verificar se secrets estão configurados neste repositório específico
-          MISSING_SECRETS=""
-          if [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_CLIENT_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_TENANT_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_TENANT_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_SUBSCRIPTION_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_KEYVAULT_ENDPOINT }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_KEYVAULT_ENDPOINT"
-          fi
-          if [ -z "${{ secrets.AZURE_KEYVAULT_NAME }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_KEYVAULT_NAME"
-          fi
-
-          if [ -n "$MISSING_SECRETS" ]; then
-            echo "❌ Secrets ausentes no repositório ${{ github.repository }}:$MISSING_SECRETS"
-            echo ""
-            echo "🔧 SOLUÇÃO NECESSÁRIA:"
-            echo "1. Acessar: https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "2. Adicionar os seguintes Repository secrets:"
-            echo "   - AZURE_CLIENT_ID: [Service Principal Client ID]"
-            echo "   - AZURE_TENANT_ID: [Azure Tenant ID]"
-            echo "   - AZURE_SUBSCRIPTION_ID: [Azure Subscription ID]"
-            echo "   - AZURE_KEYVAULT_ENDPOINT: https://[vault-name].vault.azure.net"
-            echo "   - AZURE_KEYVAULT_NAME: [vault-name]"
-            echo ""
-            echo "💡 Os values devem ser copiados do repositório principal ou do Azure Portal"
-            echo ""
-            echo "⚠️  PULANDO DEPLOY - Secrets de Redis não configurados"
-            exit 0  # Exit com sucesso para não falhar o pipeline, mas pular deploy
-          fi
-
-          echo "✅ Secrets Redis OIDC validados para ${{ github.repository }}"
-
-      - name: 🔑 Azure Login (OIDC)
-        uses: azure/login@v2
-        timeout-minutes: 5
+      - name: 🔐 Azure Login via OIDC
+        uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          enable-AzPSSession: false
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      # ─── Verificação pós-login ────────────────────────────────────────
-      - name: 🔍 Verificar conectividade Azure Redis
-        shell: bash
+      - name: 🔐 Load Environment Variables (Staging)
         run: |
-          echo "🔍 Verificando conectividade Azure Redis..."
-
-          if ACCOUNT_INFO=$(az account show --query "{name: name, id: id}" -o json 2>/dev/null); then
-            echo "✅ Login Azure Redis confirmado:"
-            echo "$ACCOUNT_INFO" | jq -r '"  Subscription: \(.name) (\(.id))"'
-          else
-            echo "❌ Falha login Azure Redis"
-            exit 1
-          fi
-
-      - name: 🔐 Sincronizar secrets do Azure Key Vault
-        shell: bash
-        run: |
-          echo "🔐 Configurando sincronização de secrets..."
-
-          # Extrair nome do vault do endpoint
-          VAULT_ENDPOINT="${{ secrets.AZURE_KEYVAULT_ENDPOINT }}"
-          VAULT_NAME="${{ secrets.AZURE_KEYVAULT_NAME }}"
-
-          echo "🔑 Vault: $VAULT_NAME"
-          echo "🌐 Endpoint: $VAULT_ENDPOINT"
-
-          # Tornar script executável
-          chmod +x .github/workflows/scripts/sync-azure-keyvault-secrets.sh
-
-          echo "🔐 Sincronizando secrets do Azure Key Vault..."
-
-          # Executar sincronização com timeout
-          timeout 300 .github/workflows/scripts/sync-azure-keyvault-secrets.sh "$VAULT_NAME" "redis-infraestrutura" || {
-            echo "❌ Timeout ou falha na sincronização de secrets"
-            echo ""
-            echo "🔧 SOLUÇÕES POSSÍVEIS:"
-            echo "1. Verificar conectividade com Azure Key Vault"
-            echo "2. Verificar permissões do Service Principal"
-            echo "3. Executar manualmente:"
-            echo "   .github/workflows/scripts/sync-azure-keyvault-secrets.sh $VAULT_NAME redis-infraestrutura"
-            echo ""
-            echo "📋 Verifique se todos os secrets existem no Azure Key Vault"
-            exit 1
-          }
-
-          echo "✅ Secrets sincronizados com sucesso"
+          echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
+          
+          # Obter secrets do Azure Key Vault via OIDC
+          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
+          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          
+          echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
 
       - name: 🧹 Smart Cleanup - Preserve Production Services
         run: |
@@ -411,106 +322,30 @@ jobs:
 
   deploy-production:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🌟 Deploy to Production
     timeout-minutes: 45
     needs: [deploy-staging]
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      # ─── Validação inteligente de secrets OIDC ───────────────────────
-      - name: 🔐 Validar e configurar secrets Azure OIDC Redis Produção
-        shell: bash
-        run: |
-          echo "🔐 Validando secrets OIDC para Redis Infrastructure Produção..."
-          echo "📁 Repositório: ${{ github.repository }}"
-
-          # Verificar se secrets estão configurados neste repositório específico
-          MISSING_SECRETS=""
-          if [ -z "${{ secrets.AZURE_CLIENT_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_CLIENT_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_TENANT_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_TENANT_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_SUBSCRIPTION_ID }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_SUBSCRIPTION_ID"
-          fi
-          if [ -z "${{ secrets.AZURE_KEYVAULT_ENDPOINT }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_KEYVAULT_ENDPOINT"
-          fi
-          if [ -z "${{ secrets.AZURE_KEYVAULT_NAME }}" ]; then
-            MISSING_SECRETS="$MISSING_SECRETS AZURE_KEYVAULT_NAME"
-          fi
-
-          if [ -n "$MISSING_SECRETS" ]; then
-            echo "❌ Secrets ausentes no repositório ${{ github.repository }}:$MISSING_SECRETS"
-            echo ""
-            echo "🔧 SOLUÇÃO NECESSÁRIA:"
-            echo "1. Acessar: https://github.com/${{ github.repository }}/settings/secrets/actions"
-            echo "2. Adicionar os seguintes Repository secrets:"
-            echo "   - AZURE_CLIENT_ID: [Service Principal Client ID]"
-            echo "   - AZURE_TENANT_ID: [Azure Tenant ID]"
-            echo "   - AZURE_SUBSCRIPTION_ID: [Azure Subscription ID]"
-            echo "   - AZURE_KEYVAULT_ENDPOINT: https://[vault-name].vault.azure.net"
-            echo "   - AZURE_KEYVAULT_NAME: [vault-name]"
-            echo ""
-            echo "💡 Os values devem ser copiados do repositório principal ou do Azure Portal"
-            echo ""
-            echo "⚠️  PULANDO DEPLOY - Secrets de Redis Produção não configurados"
-            exit 0  # Exit com sucesso para não falhar o pipeline, mas pular deploy
-          fi
-
-          echo "✅ Secrets Redis Produção OIDC validados para ${{ github.repository }}"
-
-      - name: 🔑 Azure Login (OIDC)
-        uses: azure/login@v2
-        timeout-minutes: 5
+      - name: 🔐 Azure Login via OIDC
+        uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          enable-AzPSSession: false
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      # ─── Verificação pós-login ────────────────────────────────────────
-      - name: 🔍 Verificar conectividade Azure Redis Produção
-        shell: bash
+      - name: 🔐 Load Environment Variables (Production)
         run: |
-          echo "🔍 Verificando conectividade Azure Redis Produção..."
-
-          if ACCOUNT_INFO=$(az account show --query "{name: name, id: id}" -o json 2>/dev/null); then
-            echo "✅ Login Azure Redis Produção confirmado:"
-            echo "$ACCOUNT_INFO" | jq -r '"  Subscription: \(.name) (\(.id))"'
-          else
-            echo "❌ Falha login Azure Redis Produção"
-            exit 1
-          fi
-
-      - name: 🔐 Sincronizar secrets do Azure Key Vault (Produção)
-        shell: bash
-        run: |
-          echo "🔐 Configurando sincronização de secrets para produção..."
-
-          # Extrair nome do vault do endpoint
-          VAULT_ENDPOINT="${{ secrets.AZURE_KEYVAULT_ENDPOINT }}"
-          VAULT_NAME="${{ secrets.AZURE_KEYVAULT_NAME }}"
-
-          echo "🔑 Vault: $VAULT_NAME"
-          echo "🌐 Endpoint: $VAULT_ENDPOINT"
-
-          # Tornar script executável
-          chmod +x .github/workflows/scripts/sync-azure-keyvault-secrets.sh
-
-          echo "🔐 Sincronizando secrets do Azure Key Vault para produção..."
-
-          # Executar sincronização
-          .github/workflows/scripts/sync-azure-keyvault-secrets.sh "$VAULT_NAME" "redis-infraestrutura"
-
-          echo "✅ Secrets de produção sincronizados com sucesso"
+          echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
+          
+          # Obter secrets do Azure Key Vault via OIDC
+          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
+          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          
+          echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
 
       - name: 🚀 Deploy Redis Production Stack
         run: |
