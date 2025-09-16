@@ -1,17 +1,20 @@
-# Conexão de Sorte – Redis Dedicado
+# 🔴 Redis Infrastructure - Conexão de Sorte
 
-Projeto: conexao-de-sorte-redis-infraestrutura
+**Projeto:** conexao-de-sorte-redis-infraestrutura
+**Versão:** Redis 8.2.2 (Atualizada - Setembro 2025)
 
-Este stack provisiona um Redis dedicado, compartilhável entre os microserviços na rede Docker `conexao-network`.
+Este stack provisiona um Redis dedicado e otimizado, compartilhável entre todos os microserviços na rede Docker `conexao-network`.
 
-## Principais características
+## 🚀 **Principais características**
 
-- Imagem: `redis:7-alpine`
-- Segurança: `requirepass` via variável de ambiente (não versionar senhas)
-- Persistência: `appendonly yes` (AOF)
-- Memória: `maxmemory` e política `allkeys-lru`
-- Healthcheck: PING via `redis-cli`
-- Rede: usa a rede externa `conexao-network` (pré-existente no servidor)
+- **Imagem:** `redis:8.2.2` (versão estável mais recente)
+- **Segurança:** `requirepass` via variável de ambiente (não versionar senhas)
+- **Persistência:** AOF + RDB com `save 60 1000`
+- **Memória:** 256MB max com política `allkeys-lru`
+- **Performance:** Bind 0.0.0.0, otimizado para múltiplas conexões
+- **Health Check:** Melhorado com 30s interval, 3 retries
+- **Rede:** Externa `conexao-network` (compatível com todos os microsserviços)
+- **Resource Limits:** 300M memory limit, 0.5 CPU limit
 
 ## Uso
 

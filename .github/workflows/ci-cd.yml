@@ -25,9 +25,12 @@ concurrency:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted  # Usar self-hosted runner para melhor segurança
     name: ✅ Validate Configuration
     environment: production
+    permissions:
+      id-token: write  # Para OIDC
+      contents: read
     
     steps:
       - uses: actions/checkout@v4
@@ -82,23 +85,26 @@ jobs:
 
   deploy:
     needs: validate
-    runs-on: ubuntu-latest
+    runs-on: self-hosted  # Usar self-hosted runner para melhor segurança
     name: 🚀 Deploy Redis Infrastructure
     environment: production
+    permissions:
+      id-token: write  # Para OIDC
+      contents: read
     
     steps:
       - uses: actions/checkout@v4
       
-      - name: Login to Azure
-        uses: azure/login@v1
+      - name: 🔑 Azure Login (OIDC)
+        uses: azure/login@v1.4.7
         with:
-          creds: |
-            {
-              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
-              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
-              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
-              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
-            }
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
             
       - name: Load Redis secrets
         uses: Azure/get-keyvault-secrets@v1
