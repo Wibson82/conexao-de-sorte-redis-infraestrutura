@@ -205,37 +205,31 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔐 Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: 🔐 Load Environment Variables (Staging)
-        timeout-minutes: 5
+      - name: 🔐 Sync Azure Key Vault Secrets (Staging)
+        timeout-minutes: 10
         run: |
-          echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
-          
-          # Obter secrets do Azure Key Vault via OIDC com retry
-          echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
-          for attempt in 1 2 3; do
-            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv 2>/dev/null); then
-              if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
-                echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-                echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
-                break
-              fi
-            fi
-            echo "⚠️ Tentativa $attempt falhou, aguardando 10s..."
-            sleep 10
-            if [[ $attempt -eq 3 ]]; then
-              echo "❌ Falha ao obter REDIS_PASSWORD após 3 tentativas"
-              exit 1
-            fi
-          done
-          
-          echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
+          echo "🔐 Sincronizando secrets do Azure Key Vault para Docker Swarm..."
+
+          # Executar script de sincronização
+          if ./.github/workflows/scripts/sync-azure-keyvault-secrets.sh "${{ env.AZURE_KEYVAULT_NAME }}" "staging"; then
+            echo "✅ Secrets sincronizados com sucesso para staging"
+          else
+            echo "❌ Falha na sincronização de secrets para staging"
+            exit 1
+          fi
+
+      - name: 🔍 Validate Docker Secrets (Staging)
+        timeout-minutes: 3
+        run: |
+          echo "🔍 Validando secrets Docker criados..."
+
+          # Executar validação de secrets
+          if ./.github/workflows/scripts/validate-docker-secrets.sh; then
+            echo "✅ Validação de secrets concluída com sucesso"
+          else
+            echo "❌ Falha na validação de secrets"
+            exit 1
+          fi
 
       - name: 🧹 Smart Cleanup - Preserve Production Services
         timeout-minutes: 8
@@ -323,14 +317,14 @@ jobs:
             while true; do
               RUNNING=\$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
               TOTAL=\$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
-              
+
               echo \"  Serviços prontos: \$RUNNING/\$TOTAL\"
-              
+
               if [[ \$RUNNING -eq \$TOTAL && \$TOTAL -gt 0 ]]; then
                 echo '✅ Todos os serviços estão prontos'
                 break
               fi
-              
+
               sleep 10
             done
           " || {
@@ -354,37 +348,31 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔐 Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: 🔐 Load Environment Variables (Production)
-        timeout-minutes: 5
+      - name: 🔐 Sync Azure Key Vault Secrets (Production)
+        timeout-minutes: 10
         run: |
-          echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
-          
-          # Obter secrets do Azure Key Vault via OIDC com retry
-          echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
-          for attempt in 1 2 3; do
-            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv 2>/dev/null); then
-              if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
-                echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-                echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
-                break
-              fi
-            fi
-            echo "⚠️ Tentativa $attempt falhou, aguardando 10s..."
-            sleep 10
-            if [[ $attempt -eq 3 ]]; then
-              echo "❌ Falha ao obter REDIS_PASSWORD após 3 tentativas"
-              exit 1
-            fi
-          done
-          
-          echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
+          echo "🔐 Sincronizando secrets do Azure Key Vault para Docker Swarm..."
+
+          # Executar script de sincronização
+          if ./.github/workflows/scripts/sync-azure-keyvault-secrets.sh "${{ env.AZURE_KEYVAULT_NAME }}" "production"; then
+            echo "✅ Secrets sincronizados com sucesso para produção"
+          else
+            echo "❌ Falha na sincronização de secrets para produção"
+            exit 1
+          fi
+
+      - name: 🔍 Validate Docker Secrets (Production)
+        timeout-minutes: 3
+        run: |
+          echo "🔍 Validando secrets Docker criados..."
+
+          # Executar validação de secrets
+          if ./.github/workflows/scripts/validate-docker-secrets.sh; then
+            echo "✅ Validação de secrets concluída com sucesso"
+          else
+            echo "❌ Falha na validação de secrets"
+            exit 1
+          fi
 
       - name: 🚀 Deploy Redis Production Stack
         timeout-minutes: 15
@@ -414,14 +402,14 @@ jobs:
             while true; do
               RUNNING=\$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
               TOTAL=\$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
-              
+
               echo \"  Serviços prontos: \$RUNNING/\$TOTAL\"
-              
+
               if [[ \$RUNNING -eq \$TOTAL && \$TOTAL -gt 0 ]]; then
                 echo '✅ Todos os serviços de produção estão prontos'
                 break
               fi
-              
+
               sleep 15
             done
           " || {
@@ -435,17 +423,17 @@ jobs:
         timeout-minutes: 5
         run: |
           echo "🔍 Executando health check do Redis em produção..."
-          
+
           # Aguardar um pouco mais para garantir que o Redis está completamente inicializado
           sleep 30
-          
+
           # Tentar conectar ao Redis usando o service name do Docker Swarm
           REDIS_SERVICE="conexao-de-sorte-redis-production_redis"
-          
+
           # Verificar se o serviço está rodando
           if docker service ls | grep -q "$REDIS_SERVICE"; then
             echo "✅ Serviço Redis encontrado: $REDIS_SERVICE"
-            
+
             # Tentar executar um ping no Redis
             if docker service logs "$REDIS_SERVICE" --tail 10 | grep -q "Ready to accept connections"; then
               echo "✅ Redis está aceitando conexões"
@@ -459,7 +447,7 @@ jobs:
             docker service ls
             exit 1
           fi
-          
+
           echo "✅ Health check do Redis concluído"
 
       - name: 📊 Production Status Summary
@@ -472,7 +460,7 @@ jobs:
           echo "🔗 Commit: ${{ github.sha }}"
           echo "👤 Autor: ${{ github.actor }}"
           echo ""
-          
+
           if [ "${{ job.status }}" == "success" ]; then
             echo "✅ STATUS: DEPLOY REALIZADO COM SUCESSO"
             echo ""

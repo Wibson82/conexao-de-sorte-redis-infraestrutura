@@ -6,14 +6,21 @@ services:
     hostname: conexao-redis
     restart: unless-stopped
     command: >
-      sh -c 'redis-server
-      --requirepass "$$(cat /run/secrets/REDIS_PASSWORD)"
+      sh -c '
+      REDIS_PASS="$$(cat /run/secrets/REDIS_PASSWORD 2>/dev/null || echo "defaultpass")"
+      REDIS_HOST_BIND="$$(cat /run/secrets/REDIS_HOST 2>/dev/null || echo "0.0.0.0")"
+      REDIS_PORT_NUM="$$(cat /run/secrets/REDIS_PORT 2>/dev/null || echo "6379")"
+      redis-server
+      --requirepass "$$REDIS_PASS"
       --appendonly yes
-      --bind 0.0.0.0
-      --port 6379
+      --bind "$$REDIS_HOST_BIND"
+      --port "$$REDIS_PORT_NUM"
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
-      --save 60 1000'
+      --save 60 1000
+      --protected-mode yes
+      --tcp-keepalive 300
+      --tcp-backlog 511'
     ports:
       - "6379:6379"  # Expor para outros microsserviços
     networks:
@@ -22,8 +29,19 @@ services:
       - redis-data:/data
     secrets:
       - REDIS_PASSWORD
+      - source: REDIS_HOST
+        target: /run/secrets/REDIS_HOST
+        mode: 0444
+      - source: REDIS_PORT
+        target: /run/secrets/REDIS_PORT
+        mode: 0444
+      - source: REDIS_DATABASE
+        target: /run/secrets/REDIS_DATABASE
+        mode: 0444
     healthcheck:
-      test: ["CMD", "sh", "-c", "redis-cli -a \"$$(cat /run/secrets/REDIS_PASSWORD)\" ping || exit 1"]
+      test: |
+        REDIS_PASS="$$(cat /run/secrets/REDIS_PASSWORD 2>/dev/null || echo 'defaultpass')"
+        redis-cli -a "$$REDIS_PASS" ping || exit 1
       interval: 30s
       timeout: 10s
       retries: 3
@@ -45,6 +63,18 @@ services:
         delay: 5s
         max_attempts: 3
         window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        monitor: 30s
+        max_failure_ratio: 0
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: pause
+        monitor: 30s
+        max_failure_ratio: 0
     labels:
       org.opencontainers.image.title: "Conexão de Sorte Redis"
       org.opencontainers.image.description: "Redis Cache para microserviços"
@@ -59,9 +89,57 @@ services:
 # SECRETS CONFIGURATION
 # ============================================================================
 secrets:
+  # Redis Infrastructure Secrets
   REDIS_PASSWORD:
     external: true
     name: REDIS_PASSWORD
+  REDIS_HOST:
+    external: true
+    name: REDIS_HOST
+  REDIS_PORT:
+    external: true
+    name: REDIS_PORT
+  REDIS_DATABASE:
+    external: true
+    name: REDIS_DATABASE
+
+  # Database Infrastructure Secrets (para outros microserviços)
+  DATABASE_PASSWORD:
+    external: true
+    name: DATABASE_PASSWORD
+  DATABASE_USERNAME:
+    external: true
+    name: DATABASE_USERNAME
+  DATABASE_HOST:
+    external: true
+    name: DATABASE_HOST
+  DATABASE_PORT:
+    external: true
+    name: DATABASE_PORT
+  DATABASE_PROXYSQL_PASSWORD:
+    external: true
+    name: DATABASE_PROXYSQL_PASSWORD
+  DATABASE_JDBC_URL:
+    external: true
+    name: DATABASE_JDBC_URL
+  DATABASE_R2DBC_URL:
+    external: true
+    name: DATABASE_R2DBC_URL
+  DATABASE_URL:
+    external: true
+    name: DATABASE_URL
+  DB_HOST:
+    external: true
+    name: DB_HOST
+  DB_PORT:
+    external: true
+    name: DB_PORT
+  DB_USERNAME:
+    external: true
+    name: DB_USERNAME
+  DB_PASSWORD:
+    external: true
+    name: DB_PASSWORD
 
 # ============================================================================
 # VOLUMES CONFIGURATION

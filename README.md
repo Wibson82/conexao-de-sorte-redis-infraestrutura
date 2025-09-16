@@ -56,9 +56,9 @@ Este projeto fornece uma instância Redis configurada para:
 
 ## 🔐 Configuração de Segurança
 
-### GitHub OIDC + Azure Key Vault
+### GitHub OIDC + Azure Key Vault (Sem Azure CLI)
 
-Este projeto utiliza GitHub OIDC para autenticação segura com o Azure Key Vault, eliminando a necessidade de armazenar credenciais no GitHub.
+Este projeto utiliza GitHub OIDC para autenticação segura com o Azure Key Vault, **eliminando completamente a necessidade de Azure CLI** e usando apenas REST API direta.
 
 #### Secrets Necessários no GitHub
 
@@ -69,7 +69,6 @@ Configure os seguintes secrets no repositório:
 AZURE_CLIENT_ID=<service-principal-client-id>
 AZURE_TENANT_ID=<azure-tenant-id>
 AZURE_SUBSCRIPTION_ID=<azure-subscription-id>
-AZURE_KEYVAULT_ENDPOINT=https://<vault-name>.vault.azure.net
 AZURE_KEYVAULT_NAME=<vault-name>
 ```
 
@@ -78,27 +77,49 @@ AZURE_KEYVAULT_NAME=<vault-name>
 Os seguintes secrets devem estar configurados no Azure Key Vault:
 
 ```bash
-# Redis Configuration
+# Redis Infrastructure (obrigatórios)
 conexao-de-sorte-redis-password          # Senha do Redis
-conexao-de-sorte-redis-host              # Host do Redis (opcional)
-conexao-de-sorte-redis-port              # Porta do Redis (opcional)
-conexao-de-sorte-redis-database          # Database do Redis (opcional)
 
-# Database Integration (para outros serviços)
-conexao-de-sorte-database-password       # Senha do banco principal
-conexao-de-sorte-database-username       # Usuário do banco principal
-conexao-de-sorte-database-host           # Host do banco principal
-conexao-de-sorte-database-port           # Porta do banco principal
+# Redis Infrastructure (opcionais - têm valores padrão)
+conexao-de-sorte-redis-host              # Host do Redis (padrão: 0.0.0.0)
+conexao-de-sorte-redis-port              # Porta do Redis (padrão: 6379)
+conexao-de-sorte-redis-database          # Database do Redis (padrão: 0)
 
-# JWT & Security
-conexao-de-sorte-jwt-secret              # Secret JWT
-conexao-de-sorte-jwt-signing-key         # Chave de assinatura JWT
-conexao-de-sorte-jwt-verification-key    # Chave de verificação JWT
+# Database Integration (para outros microserviços)
+conexao-de-sorte-database-host           # Host do MySQL
+conexao-de-sorte-database-port           # Porta do MySQL
+conexao-de-sorte-database-username       # Usuário do MySQL
+conexao-de-sorte-database-password       # Senha do MySQL
+conexao-de-sorte-database-proxysql-password  # Senha do ProxySQL
+conexao-de-sorte-database-jdbc-url       # URL JDBC completa
+conexao-de-sorte-database-r2dbc-url      # URL R2DBC completa
+conexao-de-sorte-database-url            # URL genérica do banco
+conexao-de-sorte-db-host                 # Host alternativo
+conexao-de-sorte-db-port                 # Porta alternativa
+conexao-de-sorte-db-username             # Usuário alternativo
+conexao-de-sorte-db-password             # Senha alternativa
+```
 
-# Monitoring & Operations
-conexao-de-sorte-monitoring-token        # Token de monitoramento
-conexao-de-sorte-session-secret          # Secret de sessão
-conexao-de-sorte-encryption-master-key   # Chave mestra de criptografia
+### Scripts de Gerenciamento (Automáticos)
+
+Os seguintes scripts são executados automaticamente pelo pipeline CI/CD:
+
+#### Sincronização de Secrets
+```bash
+# Executado automaticamente no pipeline
+./.github/workflows/scripts/sync-azure-keyvault-secrets.sh kv-conexao-de-sorte production
+```
+
+#### Validação de Secrets
+```bash
+# Executado automaticamente após sincronização
+./.github/workflows/scripts/validate-docker-secrets.sh --verbose
+```
+
+#### Limpeza de Secrets
+```bash
+# Disponível para manutenção manual se necessário
+./.github/workflows/scripts/cleanup-docker-secrets.sh
 ```
 
 ## 🚀 Deploy
@@ -122,43 +143,29 @@ O deploy é executado automaticamente quando:
 - **Staging**: `conexao-de-sorte-redis-staging`
 - **Produção**: `conexao-de-sorte-redis-production`
 
-## 🔧 Configuração Local
+## 🔧 Configuração de Produção
 
 ### Pré-requisitos
 
-- Docker 20.10+
-- Docker Compose 2.0+
-- Azure CLI (para sincronização de secrets)
-- Acesso ao Azure Key Vault
+- ✅ Azure Service Principal com federação OIDC configurada
+- ✅ Azure Key Vault com secrets configurados
+- ✅ GitHub Secrets configurados no repositório
+- ✅ Runners self-hosted configurados com Docker Swarm
 
-### Setup Local
+### Setup de Produção
 
-1. **Clone o repositório**:
-```bash
-git clone <repository-url>
-cd conexao-de-sorte-redis-infraestrutura
-```
+1. **Configure Azure OIDC** (ver [GITHUB-OIDC-SETUP.md](GITHUB-OIDC-SETUP.md)):
+   - Service Principal com federação OIDC
+   - Permissões no Key Vault
+   - Secrets no GitHub Repository
 
-2. **Configure Azure CLI**:
-```bash
-az login
-az account set --subscription <subscription-id>
-```
+2. **Secrets no Azure Key Vault**:
+   - Configure todos os secrets necessários conforme documentado
 
-3. **Sincronize secrets**:
-```bash
-chmod +x .github/workflows/scripts/sync-azure-keyvault-secrets.sh
-./.github/workflows/scripts/sync-azure-keyvault-secrets.sh kv-conexao-de-sorte redis-infraestrutura
-```
-
-4. **Deploy local**:
-```bash
-# Inicializar Docker Swarm (se necessário)
-docker swarm init
-
-# Deploy da stack
-docker stack deploy -c docker-compose.yml conexao-redis-local
-```
+3. **Deploy Automático**:
+   - Push para `main` → Deploy automático via GitHub Actions
+   - Staging → Produção em sequência
+   - Validação automática de secrets e health checks
 
 ## 📊 Monitoramento
 
@@ -181,8 +188,8 @@ docker service logs conexao-de-sorte-redis-production_redis -f
 # Verificar secrets
 docker secret ls | grep REDIS
 
-# Conectar ao Redis (para debug)
-docker exec -it $(docker ps -q -f name=redis) redis-cli -a "$(docker secret inspect REDIS_PASSWORD --format '{{.Spec.Data}}')"
+# Inspecionar configuração do serviço
+docker service inspect conexao-de-sorte-redis-production_redis
 ```
 
 ### Métricas Importantes
@@ -221,11 +228,14 @@ services:
 
 1. **Secret não encontrado**:
 ```bash
-# Verificar se secret existe
-docker secret ls | grep REDIS_PASSWORD
+# Verificar se secret existe no Docker Swarm
+docker secret ls | grep REDIS
 
-# Recriar secret se necessário
-./.github/workflows/scripts/sync-azure-keyvault-secrets.sh kv-conexao-de-sorte redis-infraestrutura
+# Recriar secrets se necessário
+./.github/workflows/scripts/sync-azure-keyvault-secrets.sh kv-conexao-de-sorte production
+
+# Validar secrets criados
+./.github/workflows/scripts/validate-docker-secrets.sh
 ```
 
 2. **Redis não aceita conexões**:
@@ -235,6 +245,9 @@ docker service logs conexao-de-sorte-redis-production_redis --tail 50
 
 # Verificar health check
 docker service ps conexao-de-sorte-redis-production_redis
+
+# Testar conexão direta
+docker exec -it $(docker ps -q -f name=redis) redis-cli ping
 ```
 
 3. **Problemas de rede**:
@@ -244,6 +257,19 @@ docker network ls | grep conexao-network-swarm
 
 # Recriar rede se necessário
 docker network create --driver overlay --attachable conexao-network-swarm
+```
+
+4. **Problemas com OIDC/Key Vault**:
+```bash
+# Verificar configuração OIDC no Azure
+az ad app federated-credential list --id <app-id>
+
+# Verificar permissões do Key Vault
+az keyvault show --name <vault-name> --query "properties.accessPolicies"
+
+# Testar acesso manual aos secrets
+curl -H "Authorization: Bearer <token>" \
+  "https://<vault-name>.vault.azure.net/secrets/conexao-de-sorte-redis-password?api-version=7.4"
 ```
 
 ### Logs e Debug
