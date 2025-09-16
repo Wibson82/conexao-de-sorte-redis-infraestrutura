@@ -25,6 +25,7 @@ env:
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
 
 # Configuração de permissões para GitHub OIDC
 permissions:
@@ -219,7 +220,7 @@ jobs:
           # Obter secrets do Azure Key Vault via OIDC com retry
           echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
           for attempt in 1 2 3; do
-            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv 2>/dev/null); then
+            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ secrets.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv 2>/dev/null); then
               if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
                 echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
                 echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
@@ -368,7 +369,7 @@ jobs:
           # Obter secrets do Azure Key Vault via OIDC com retry
           echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
           for attempt in 1 2 3; do
-            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv 2>/dev/null); then
+            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ secrets.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv 2>/dev/null); then
               if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
                 echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
                 echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
