@@ -58,18 +58,21 @@ jobs:
           echo "✅ Dummy environment variables (REDIS_PASSWORD) set for validation"
 
       - name: 🔍 Validate docker-compose files
+        timeout-minutes: 2
         run: |
           # Validar sintaxe do docker-compose.yml principal (produção)
           docker compose -f docker-compose.yml config -q
           echo "✅ Docker Compose syntax is valid"
 
       - name: 🧮 Render Docker Stack configuration
+        timeout-minutes: 2
         run: |
           # Garantir que o arquivo é válido para uso com docker stack deploy
           docker stack config -c ./docker-compose.yml > /tmp/docker-stack-rendered.yml
           echo "✅ Docker Stack configuration rendered successfully"
 
       - name: 🧪 Test Services Definition
+        timeout-minutes: 3
         run: |
           # Verificar se todos os serviços essenciais estão definidos
           echo "🔍 Debug: Listing all available services:"
@@ -92,6 +95,7 @@ jobs:
           [ ${#missing[@]} -eq 0 ] || { echo "❌ Missing services: ${missing[*]}"; exit 1; }
 
       - name: 🌐 Validate Network Configuration
+        timeout-minutes: 2
         run: |
           # Verificar rede conexao-network (usar apenas compose principal)
           if docker compose -f docker-compose.yml config | grep -q "conexao-network"; then
@@ -102,6 +106,7 @@ jobs:
           fi
 
       - name: 💾 Validate Volumes Configuration
+        timeout-minutes: 2
         run: |
           # Verificar volumes persistentes
           volumes=("redis-data")
@@ -129,6 +134,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🔍 Scan docker-compose for secrets
+        timeout-minutes: 3
         run: |
           if [ -f docker-compose.yml ]; then
             # Verificar se não há secrets hardcoded (valores reais de senha, não nomes de secrets)
@@ -206,16 +212,32 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: 🔐 Load Environment Variables (Staging)
+        timeout-minutes: 5
         run: |
           echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
           
-          # Obter secrets do Azure Key Vault via OIDC
-          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
-          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          # Obter secrets do Azure Key Vault via OIDC com retry
+          echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
+          for attempt in 1 2 3; do
+            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv 2>/dev/null); then
+              if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
+                echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+                echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
+                break
+              fi
+            fi
+            echo "⚠️ Tentativa $attempt falhou, aguardando 10s..."
+            sleep 10
+            if [[ $attempt -eq 3 ]]; then
+              echo "❌ Falha ao obter REDIS_PASSWORD após 3 tentativas"
+              exit 1
+            fi
+          done
           
           echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
 
       - name: 🧹 Smart Cleanup - Preserve Production Services
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           STACK_NAME="conexao-de-sorte-redis-staging"
@@ -273,6 +295,7 @@ jobs:
           echo "✅ Limpeza inteligente concluída"
 
       - name: 🚀 Deploy Redis Stack
+        timeout-minutes: 12
         run: |
           set -euo pipefail
           STACK_NAME="conexao-de-sorte-redis-staging"
@@ -338,16 +361,32 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: 🔐 Load Environment Variables (Production)
+        timeout-minutes: 5
         run: |
           echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
           
-          # Obter secrets do Azure Key Vault via OIDC
-          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
-          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          # Obter secrets do Azure Key Vault via OIDC com retry
+          echo "🔑 Obtendo REDIS_PASSWORD do Azure Key Vault..."
+          for attempt in 1 2 3; do
+            if REDIS_PASSWORD=$(timeout 30 az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv 2>/dev/null); then
+              if [[ -n "$REDIS_PASSWORD" && "$REDIS_PASSWORD" != "null" ]]; then
+                echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+                echo "✅ REDIS_PASSWORD obtido com sucesso (tentativa $attempt)"
+                break
+              fi
+            fi
+            echo "⚠️ Tentativa $attempt falhou, aguardando 10s..."
+            sleep 10
+            if [[ $attempt -eq 3 ]]; then
+              echo "❌ Falha ao obter REDIS_PASSWORD após 3 tentativas"
+              exit 1
+            fi
+          done
           
           echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
 
       - name: 🚀 Deploy Redis Production Stack
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           STACK_NAME="conexao-de-sorte-redis-production"
@@ -392,6 +431,7 @@ jobs:
           echo "🎉 Deploy do Redis PRODUÇÃO concluído com sucesso!"
 
       - name: 🔍 Health Check Redis Production
+        timeout-minutes: 5
         run: |
           echo "🔍 Executando health check do Redis em produção..."
           
