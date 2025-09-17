@@ -41,14 +41,86 @@ defaults:
     shell: bash -euo pipefail {0}
 
 # ----------------------------------------------------------------------
-# JOB 1 ▸ VALIDAÇÃO DO AMBIENTE
+# JOB 1 ▸ VALIDAÇÃO (GITHUB-HOSTED) - IGUAL AO TRAEFIK
 # ----------------------------------------------------------------------
 
 jobs:
-  validate-compose:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
-    name: 🔍 Validate Docker Compose
+  validate-and-build:
+    runs-on: ubuntu-latest
+    name: 🔍 Validate & Build
     timeout-minutes: 10
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Validate docker-compose files
+        timeout-minutes: 2
+        run: |
+          # Instalar Docker Compose se necessário
+          sudo apt-get update
+          sudo apt-get install -y docker-compose-plugin
+
+          # Validar sintaxe do docker-compose.yml principal (produção)
+          docker compose -f docker-compose.yml config -q
+          echo "✅ Docker Compose syntax is valid"
+
+      - name: 🧪 Test Services Definition
+        timeout-minutes: 3
+        run: |
+          # Verificar se todos os serviços essenciais estão definidos
+          echo "🔍 Debug: Listing all available services:"
+          all_services=$(docker compose -f docker-compose.yml config --services | sort)
+          echo "$all_services"
+
+          echo ""
+          echo "🧪 Testing each service individually:"
+          services=("redis")
+
+          missing=()
+          for service in "${services[@]}"; do
+            if echo "$all_services" | grep -Fxq "$service"; then
+              echo "✅ Service '$service' found in main docker-compose.yml"
+            else
+              missing+=("$service")
+            fi
+          done
+
+          [ ${#missing[@]} -eq 0 ] || { echo "❌ Missing services: ${missing[*]}"; exit 1; }
+
+      - name: 🛡️ Security Scan
+        timeout-minutes: 3
+        run: |
+          if [ -f docker-compose.yml ]; then
+            # Verificar se não há secrets hardcoded
+            if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "file:" | grep -v "external:" | grep -E "password:[[:space:]]*[^[:space:]\$]"; then
+              echo "❌ Found hardcoded passwords in compose files"
+              exit 1
+            else
+              echo "✅ No hardcoded passwords found"
+            fi
+
+            # Verificar se imagens usam tags específicas (evitar latest)
+            if grep -q ":latest" docker-compose.yml; then
+              echo "❌ Uso de tags 'latest' detectado - não recomendado para produção"
+              exit 1
+            else
+              echo "✅ Todas as imagens usam tags específicas"
+            fi
+          else
+            echo "❌ docker-compose.yml não encontrado"
+            exit 1
+          fi
+
+# ----------------------------------------------------------------------
+# JOB 2 ▸ DEPLOY (SELF-HOSTED) - IGUAL AO TRAEFIK
+# ----------------------------------------------------------------------
+
+  deploy-production:
+    needs: validate-and-build
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    name: 🚀 Deploy to Production
+    timeout-minutes: 25
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
@@ -80,170 +152,6 @@ jobs:
           echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
           echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
           echo "✅ Redis secrets carregados e mascarados do Azure Key Vault"
-
-      - name: 🔍 Validate docker-compose files
-        timeout-minutes: 2
-        run: |
-          # Validar sintaxe do docker-compose.yml principal (produção)
-          docker compose -f docker-compose.yml config -q
-          echo "✅ Docker Compose syntax is valid"
-
-      - name: 🧮 Render Docker Stack configuration
-        timeout-minutes: 2
-        run: |
-          # Garantir que o arquivo é válido para uso com docker stack deploy
-          docker stack config -c ./docker-compose.yml > /tmp/docker-stack-rendered.yml
-          echo "✅ Docker Stack configuration rendered successfully"
-
-      - name: 🧪 Test Services Definition
-        timeout-minutes: 3
-        run: |
-          # Verificar se todos os serviços essenciais estão definidos
-          echo "🔍 Debug: Listing all available services:"
-          all_services=$(docker compose -f docker-compose.yml config --services | sort)
-          echo "$all_services"
-
-          echo ""
-          echo "🧪 Testing each service individually:"
-          services=("redis")
-
-          missing=()
-          for service in "${services[@]}"; do
-            if echo "$all_services" | grep -Fxq "$service"; then
-              echo "✅ Service '$service' found in main docker-compose.yml"
-            else
-              missing+=("$service")
-            fi
-          done
-
-          [ ${#missing[@]} -eq 0 ] || { echo "❌ Missing services: ${missing[*]}"; exit 1; }
-
-      - name: 🌐 Validate Network Configuration
-        timeout-minutes: 2
-        run: |
-          # Verificar rede conexao-network (usar apenas compose principal)
-          if docker compose -f docker-compose.yml config | grep -q "conexao-network"; then
-            echo "✅ Network 'conexao-network' configured"
-          else
-            echo "❌ Network 'conexao-network' missing"
-            exit 1
-          fi
-
-      - name: 💾 Validate Volumes Configuration
-        timeout-minutes: 2
-        run: |
-          # Verificar volumes persistentes
-          volumes=("redis-data")
-
-          for volume in "${volumes[@]}"; do
-            if docker compose -f docker-compose.yml config | grep -q "$volume"; then
-              echo "✅ Volume '$volume' configured"
-            else
-              echo "❌ Volume '$volume' missing"
-              exit 1
-            fi
-          done
-
-# ----------------------------------------------------------------------
-# JOB 2 ▸ ANÁLISE DE SEGURANÇA
-# ----------------------------------------------------------------------
-
-  security-scan:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
-    name: 🛡️ Security Scan
-    timeout-minutes: 15
-    needs: validate-compose
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 🔍 Scan docker-compose for secrets
-        timeout-minutes: 3
-        run: |
-          if [ -f docker-compose.yml ]; then
-            # Verificar se não há secrets hardcoded (valores reais de senha, não nomes de secrets)
-            # Procura por linhas que contenham password: seguido de valores que não sejam variáveis ou referências
-            if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "file:" | grep -v "external:" | grep -E "password:[[:space:]]*[^[:space:]\$]"; then
-              echo "❌ Found hardcoded passwords in compose files"
-              echo "Lines with potential hardcoded passwords:"
-              grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "file:" | grep -v "external:" | grep -E "password:[[:space:]]*[^[:space:]\$]" || true
-              exit 1
-            else
-              echo "✅ No hardcoded passwords found"
-            fi
-          else
-            echo "❌ docker-compose.yml não encontrado"
-            exit 1
-          fi
-
-      - name: 🔐 Check environment variables
-        run: |
-          if [ -f docker-compose.yml ]; then
-            echo "🔐 Validating Azure Key Vault integration via GitHub OIDC..."
-            echo "✅ GitHub OIDC configured for Azure Key Vault access"
-            echo "✅ Redis secrets will be retrieved from Azure Key Vault during deployment"
-          else
-            echo "❌ docker-compose.yml não encontrado"
-            exit 1
-          fi
-
-      - name: 🔍 Scan image versions for vulnerabilities
-        run: |
-          if [ -f docker-compose.yml ]; then
-            echo "🔍 Validando versões de imagens contra CVEs conhecidas..."
-
-            # Verificar versões atuais e alertar sobre versões antigas
-            declare -A current_versions=(
-              ["redis"]="8.2.2-alpine"
-            )
-
-            echo "📋 Versões atuais validadas:"
-            for service in "${!current_versions[@]}"; do
-              echo "✅ $service: ${current_versions[$service]}"
-            done
-
-            # Verificar se imagens usam tags específicas (evitar latest)
-            if grep -q ":latest" docker-compose.yml; then
-              echo "❌ Uso de tags 'latest' detectado - não recomendado para produção"
-              exit 1
-            else
-              echo "✅ Todas as imagens usam tags específicas"
-            fi
-          else
-            echo "❌ docker-compose.yml não encontrado"
-            exit 1
-          fi
-
-# ----------------------------------------------------------------------
-# JOB 3 ▸ DEPLOY PARA PRODUÇÃO
-# ----------------------------------------------------------------------
-
-  deploy-production:
-    if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
-    name: 🌟 Deploy to Production
-    timeout-minutes: 25
-    needs: [validate-compose, security-scan]
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 🔐 Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: 🔐 Load Environment Variables (Production)
-        run: |
-          echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
-
-          # Obter secrets do Azure Key Vault via OIDC
-          REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
-          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-
-          echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
 
       - name: 🔐 Create Docker Secrets (Production)
         timeout-minutes: 5
