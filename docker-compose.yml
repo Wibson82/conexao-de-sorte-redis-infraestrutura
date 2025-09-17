@@ -21,8 +21,7 @@ services:
       --protected-mode yes
       --tcp-keepalive 300
       --tcp-backlog 511'
-    ports:
-      - "6379:6379"  # Expor para outros microsserviços
+    # Redis deve ser acessível apenas via rede overlay interna - SEM exposição pública
     networks:
       - conexao-network-swarm
     volumes:
