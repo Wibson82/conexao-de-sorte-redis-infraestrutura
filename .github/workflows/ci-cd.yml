@@ -215,38 +215,38 @@ jobs:
       - name: 🔐 Load Environment Variables (Staging)
         run: |
           echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
-          
+
           # Obter secrets do Azure Key Vault via OIDC
           REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-          
+
           echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
 
       - name: 🔐 Create Docker Secrets (Staging)
         timeout-minutes: 5
         run: |
           echo "🔐 Criando Docker Secrets para staging..."
-          
+
           # Verificar se a variável está definida
           if [ -z "$REDIS_PASSWORD" ]; then
             echo "❌ REDIS_PASSWORD não está definida"
             exit 1
           fi
-          
+
           # Criar secret do Redis no Docker Swarm
           echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
             echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
             docker secret rm redis-password 2>/dev/null || true
             echo "$REDIS_PASSWORD" | docker secret create redis-password -
           }
-          
+
           echo "✅ Docker Secrets criados com sucesso para staging"
 
       - name: 🔍 Validate Docker Secrets (Staging)
         timeout-minutes: 3
         run: |
           echo "🔍 Validando Docker Secrets criados..."
-          
+
           # Verificar se o secret do Redis foi criado
           if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
             echo "✅ Secret redis-password encontrado"
@@ -254,7 +254,7 @@ jobs:
             echo "❌ Secret redis-password não encontrado"
             exit 1
           fi
-          
+
           echo "✅ Validação de secrets concluída com sucesso"
 
       - name: 🧹 Smart Cleanup - Preserve Production Services
@@ -384,32 +384,32 @@ jobs:
       - name: 🔐 Load Environment Variables (Production)
         run: |
           echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
-          
+
           # Obter secrets do Azure Key Vault via OIDC
           REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-          
+
           echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
 
       - name: 🔐 Create Docker Secrets (Production)
         timeout-minutes: 5
         run: |
           echo "🔐 Criando Docker Secrets para produção..."
-          
+
           # Criar secret do Redis no Docker Swarm
           echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
             echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
             docker secret rm redis-password 2>/dev/null || true
             echo "$REDIS_PASSWORD" | docker secret create redis-password -
           }
-          
+
           echo "✅ Docker Secrets criados com sucesso para produção"
 
       - name: 🔍 Validate Docker Secrets (Production)
         timeout-minutes: 3
         run: |
           echo "🔍 Validando Docker Secrets criados..."
-          
+
           # Verificar se o secret do Redis foi criado
           if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
             echo "✅ Secret redis-password encontrado"
@@ -417,7 +417,7 @@ jobs:
             echo "❌ Secret redis-password não encontrado"
             exit 1
           fi
-          
+
           echo "✅ Validação de secrets concluída com sucesso"
 
       - name: 🚀 Deploy Redis Production Stack
