@@ -1,19 +1,33 @@
-name: 🧪 Test Workflow
+name: 🧪 Test Workflow - Runner Connectivity
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-github:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: 🧪 Simple test
+      - name: 🧪 GitHub-hosted test
         run: |
-          echo "✅ Test workflow working"
+          echo "✅ GitHub-hosted runner working"
           echo "📁 Files in repo:"
           ls -la
           echo "🔍 Docker compose exists:"
           ls -la docker-compose.yml || echo "❌ No docker-compose.yml"
-          echo "✅ Test completed successfully"
+          echo "✅ GitHub-hosted test completed"
+
+  test-self-hosted:
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🧪 Self-hosted test
+        run: |
+          echo "✅ Self-hosted runner working"
+          echo "📁 Files in repo:"
+          ls -la
+          echo "🔍 Docker compose exists:"
+          ls -la docker-compose.yml || echo "❌ No docker-compose.yml"
+          echo "✅ Self-hosted test completed"
