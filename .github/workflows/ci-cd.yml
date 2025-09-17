@@ -205,31 +205,34 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔐 Sync Azure Key Vault Secrets (Staging)
-        timeout-minutes: 10
+      - name: 🔐 Create Docker Secrets (Staging)
+        timeout-minutes: 5
         run: |
-          echo "🔐 Sincronizando secrets do Azure Key Vault para Docker Swarm..."
-
-          # Executar script de sincronização
-          if ./.github/workflows/scripts/sync-azure-keyvault-secrets.sh "${{ env.AZURE_KEYVAULT_NAME }}" "staging"; then
-            echo "✅ Secrets sincronizados com sucesso para staging"
-          else
-            echo "❌ Falha na sincronização de secrets para staging"
-            exit 1
-          fi
+          echo "🔐 Criando Docker Secrets para staging..."
+          
+          # Criar secret do Redis no Docker Swarm
+          echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
+            echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
+            docker secret rm redis-password 2>/dev/null || true
+            echo "$REDIS_PASSWORD" | docker secret create redis-password -
+          }
+          
+          echo "✅ Docker Secrets criados com sucesso para staging"
 
       - name: 🔍 Validate Docker Secrets (Staging)
         timeout-minutes: 3
         run: |
-          echo "🔍 Validando secrets Docker criados..."
-
-          # Executar validação de secrets
-          if ./.github/workflows/scripts/validate-docker-secrets.sh; then
-            echo "✅ Validação de secrets concluída com sucesso"
+          echo "🔍 Validando Docker Secrets criados..."
+          
+          # Verificar se o secret do Redis foi criado
+          if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
+            echo "✅ Secret redis-password encontrado"
           else
-            echo "❌ Falha na validação de secrets"
+            echo "❌ Secret redis-password não encontrado"
             exit 1
           fi
+          
+          echo "✅ Validação de secrets concluída com sucesso"
 
       - name: 🧹 Smart Cleanup - Preserve Production Services
         timeout-minutes: 8
@@ -348,31 +351,34 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔐 Sync Azure Key Vault Secrets (Production)
-        timeout-minutes: 10
+      - name: 🔐 Create Docker Secrets (Production)
+        timeout-minutes: 5
         run: |
-          echo "🔐 Sincronizando secrets do Azure Key Vault para Docker Swarm..."
-
-          # Executar script de sincronização
-          if ./.github/workflows/scripts/sync-azure-keyvault-secrets.sh "${{ env.AZURE_KEYVAULT_NAME }}" "production"; then
-            echo "✅ Secrets sincronizados com sucesso para produção"
-          else
-            echo "❌ Falha na sincronização de secrets para produção"
-            exit 1
-          fi
+          echo "🔐 Criando Docker Secrets para produção..."
+          
+          # Criar secret do Redis no Docker Swarm
+          echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
+            echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
+            docker secret rm redis-password 2>/dev/null || true
+            echo "$REDIS_PASSWORD" | docker secret create redis-password -
+          }
+          
+          echo "✅ Docker Secrets criados com sucesso para produção"
 
       - name: 🔍 Validate Docker Secrets (Production)
         timeout-minutes: 3
         run: |
-          echo "🔍 Validando secrets Docker criados..."
-
-          # Executar validação de secrets
-          if ./.github/workflows/scripts/validate-docker-secrets.sh; then
-            echo "✅ Validação de secrets concluída com sucesso"
+          echo "🔍 Validando Docker Secrets criados..."
+          
+          # Verificar se o secret do Redis foi criado
+          if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
+            echo "✅ Secret redis-password encontrado"
           else
-            echo "❌ Falha na validação de secrets"
+            echo "❌ Secret redis-password não encontrado"
             exit 1
           fi
+          
+          echo "✅ Validação de secrets concluída com sucesso"
 
       - name: 🚀 Deploy Redis Production Stack
         timeout-minutes: 15
