@@ -236,6 +236,29 @@ jobs:
 
           echo "✅ Validação de secrets concluída com sucesso"
 
+      - name: 🔧 Ensure Required Docker Resources
+        timeout-minutes: 3
+        run: |
+          echo "🔧 Verificando/criando recursos Docker necessários..."
+
+          # Criar volume Redis se não existir
+          if ! docker volume ls | grep -q "redis_data"; then
+            echo "📦 Criando volume redis_data..."
+            docker volume create redis_data
+          else
+            echo "✅ Volume redis_data já existe"
+          fi
+
+          # Verificar rede Swarm
+          if ! docker network ls | grep -q "conexao-network-swarm"; then
+            echo "🌐 Criando rede Swarm..."
+            docker network create -d overlay --attachable conexao-network-swarm
+          else
+            echo "✅ Rede conexao-network-swarm já existe"
+          fi
+
+          echo "✅ Recursos Docker verificados/criados"
+
       - name: 🚀 Deploy Redis Production Stack
         timeout-minutes: 15
         run: |
@@ -258,26 +281,29 @@ jobs:
 
           echo "✅ Stack de produção deployada com sucesso"
 
-          # Aguardar serviços ficarem prontos
+          # Aguardar serviços ficarem prontos (simplificado sem timeout complexo)
           echo "⏳ Aguardando serviços de produção ficarem prontos..."
-          timeout 180 bash -c "
-            while true; do
-              RUNNING=\$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
-              TOTAL=\$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
 
-              echo \"  Serviços prontos: \$RUNNING/\$TOTAL\"
+          for i in {1..12}; do
+            RUNNING=$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
+            TOTAL=$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
 
-              if [[ \$RUNNING -eq \$TOTAL && \$TOTAL -gt 0 ]]; then
-                echo '✅ Todos os serviços de produção estão prontos'
-                break
-              fi
+            echo "  Tentativa $i/12 - Serviços prontos: $RUNNING/$TOTAL"
 
-              sleep 15
-            done
-          " || {
-            echo "⚠️ Timeout aguardando serviços de produção - verificando status..."
-            docker stack services "$STACK_NAME"
-          }
+            if [[ $RUNNING -eq $TOTAL && $TOTAL -gt 0 ]]; then
+              echo '✅ Todos os serviços de produção estão prontos'
+              break
+            fi
+
+            if [[ $i -eq 12 ]]; then
+              echo "⚠️ Timeout aguardando serviços - verificando status final..."
+              docker stack services "$STACK_NAME"
+              echo "🔍 Logs do serviço para diagnóstico:"
+              docker service logs conexao-redis_redis --tail 20 || echo "❌ Erro ao obter logs"
+            fi
+
+            sleep 15
+          done
 
           echo "🎉 Deploy do Redis PRODUÇÃO concluído com sucesso!"
 
