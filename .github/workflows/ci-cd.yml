@@ -212,14 +212,15 @@ jobs:
         run: |
           echo "🔐 Criando Docker Secrets para produção..."
 
-          # Criar secret do Redis no Docker Swarm
-          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password - 2>/dev/null || {
-            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe, removendo e recriando..."
-            docker secret rm conexao-de-sorte-redis-password 2>/dev/null || true
+          # Verificar se secret existe e criar apenas se necessário
+          if docker secret ls --format "table {{.Name}}" | grep -q "conexao-de-sorte-redis-password"; then
+            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe - reutilizando"
+          else
+            echo "📝 Criando novo secret conexao-de-sorte-redis-password..."
             echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
-          }
+          fi
 
-          echo "✅ Docker Secrets criados com sucesso para produção"
+          echo "✅ Docker Secrets verificados/criados com sucesso"
 
       - name: 🔍 Validate Docker Secrets (Production)
         timeout-minutes: 3
