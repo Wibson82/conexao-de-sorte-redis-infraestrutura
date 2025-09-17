@@ -68,11 +68,18 @@ jobs:
           REDIS_PORT=$(az keyvault secret show --name "conexao-de-sorte-redis-port" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
           REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
 
+          # Mascarar secrets nos logs para segurança
+          echo "::add-mask::$REDIS_PASSWORD"
+          echo "::add-mask::$REDIS_HOST"
+          echo "::add-mask::$REDIS_PORT"
+          echo "::add-mask::$REDIS_DATABASE"
+
+          # Adicionar ao ambiente sem expor nos logs
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
           echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
           echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
           echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
-          echo "✅ Redis secrets carregados do Azure Key Vault"
+          echo "✅ Redis secrets carregados e mascarados do Azure Key Vault"
 
       - name: 🔍 Validate docker-compose files
         timeout-minutes: 2
