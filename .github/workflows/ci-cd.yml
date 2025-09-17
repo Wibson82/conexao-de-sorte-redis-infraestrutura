@@ -53,10 +53,26 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
-      - name: 🔧 Set Dummy Environment Variables for Validation
+      - name: 🔐 Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔑 Load Redis Secrets from Azure Key Vault
         run: |
-          echo "REDIS_PASSWORD=dummy_password_for_validation" >> $GITHUB_ENV
-          echo "✅ Dummy environment variables (REDIS_PASSWORD) set for validation"
+          echo "🔐 Carregando secrets do Redis do Azure Key Vault..."
+          REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+          REDIS_HOST=$(az keyvault secret show --name "conexao-de-sorte-redis-host" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+          REDIS_PORT=$(az keyvault secret show --name "conexao-de-sorte-redis-port" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+          REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+
+          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
+          echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
+          echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
+          echo "✅ Redis secrets carregados do Azure Key Vault"
 
       - name: 🔍 Validate docker-compose files
         timeout-minutes: 2
@@ -217,7 +233,7 @@ jobs:
           echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
 
           # Obter secrets do Azure Key Vault via OIDC
-          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
+          REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
 
           echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
@@ -228,10 +244,10 @@ jobs:
           echo "🔐 Criando Docker Secrets para produção..."
 
           # Criar secret do Redis no Docker Swarm
-          echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
-            echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
-            docker secret rm redis-password 2>/dev/null || true
-            echo "$REDIS_PASSWORD" | docker secret create redis-password -
+          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password - 2>/dev/null || {
+            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe, removendo e recriando..."
+            docker secret rm conexao-de-sorte-redis-password 2>/dev/null || true
+            echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
           }
 
           echo "✅ Docker Secrets criados com sucesso para produção"
@@ -242,10 +258,10 @@ jobs:
           echo "🔍 Validando Docker Secrets criados..."
 
           # Verificar se o secret do Redis foi criado
-          if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
-            echo "✅ Secret redis-password encontrado"
+          if docker secret ls --format "table {{.Name}}" | grep -q "conexao-de-sorte-redis-password"; then
+            echo "✅ Secret conexao-de-sorte-redis-password encontrado"
           else
-            echo "❌ Secret redis-password não encontrado"
+            echo "❌ Secret conexao-de-sorte-redis-password não encontrado"
             exit 1
           fi
 
