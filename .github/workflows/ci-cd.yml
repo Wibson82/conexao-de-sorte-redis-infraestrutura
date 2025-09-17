@@ -46,7 +46,7 @@ defaults:
 
 jobs:
   validate-compose:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao]
     name: 🔍 Validate Docker Compose
     timeout-minutes: 10
     steps:
@@ -149,7 +149,7 @@ jobs:
 # ----------------------------------------------------------------------
 
   security-scan:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao]
     name: 🛡️ Security Scan
     timeout-minutes: 15
     needs: validate-compose
@@ -220,7 +220,7 @@ jobs:
 
   deploy-production:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao]
     name: 🌟 Deploy to Production
     timeout-minutes: 25
     needs: [validate-compose, security-scan]
