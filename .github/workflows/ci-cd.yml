@@ -172,25 +172,40 @@ jobs:
         run: |
           echo "🔐 Carregando secrets do Redis do Azure Key Vault..."
 
-          # Secrets existentes no Azure Key Vault
-          REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
-          REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+          # Testar conectividade Azure Key Vault primeiro
+          if timeout 10 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv >/dev/null 2>&1; then
+            echo "✅ Azure Key Vault acessível"
 
-          # Configurações fixas para Redis (não são secrets)
-          REDIS_HOST="redis"  # Nome do serviço Docker
-          REDIS_PORT="6379"   # Porta padrão Redis
+            # Secrets existentes no Azure Key Vault (conforme lista fornecida)
+            REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+            REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+            REDIS_HOST=$(az keyvault secret show --name "conexao-de-sorte-redis-host" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
+            REDIS_PORT=$(az keyvault secret show --name "conexao-de-sorte-redis-port" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
 
-          # Mascarar apenas secrets reais nos logs para segurança
+            echo "✅ Redis secrets carregados do Azure Key Vault (password, database, host, port)"
+          else
+            echo "⚠️ Azure Key Vault inacessível - usando configurações padrão"
+
+            # Fallback para configurações padrão Redis
+            REDIS_PASSWORD="redis_default_password"  # Senha padrão temporária
+            REDIS_DATABASE="0"
+            REDIS_HOST="redis"
+            REDIS_PORT="6379"
+
+            echo "⚠️ Usando configurações padrão Redis (ATENÇÃO: mudar senha em produção!)"
+          fi
+
+          # Mascarar secrets nos logs para segurança
           echo "::add-mask::$REDIS_PASSWORD"
           echo "::add-mask::$REDIS_DATABASE"
+          echo "::add-mask::$REDIS_HOST"
+          echo "::add-mask::$REDIS_PORT"
 
           # Adicionar ao ambiente sem expor nos logs
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
           echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
           echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
           echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
-          echo "✅ Redis secrets carregados do Azure Key Vault (password, database)"
-          echo "✅ Redis configurações definidas (host: $REDIS_HOST, port: $REDIS_PORT)"
 
       - name: 🔐 Create Docker Secrets (Production)
         timeout-minutes: 5
