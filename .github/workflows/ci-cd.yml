@@ -46,7 +46,7 @@ defaults:
 
 jobs:
   validate-compose:
-    runs-on: [self-hosted, Linux, X64, conexao]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🔍 Validate Docker Compose
     timeout-minutes: 10
     steps:
@@ -126,7 +126,7 @@ jobs:
 # ----------------------------------------------------------------------
 
   security-scan:
-    runs-on: [self-hosted, Linux, X64, conexao]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🛡️ Security Scan
     timeout-minutes: 15
     needs: validate-compose
@@ -197,7 +197,7 @@ jobs:
 
   deploy-staging:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, conexao]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🚀 Deploy to Staging
     timeout-minutes: 30
     needs: [validate-compose, security-scan]
@@ -205,10 +205,33 @@ jobs:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
+      - name: 🔐 Azure Login via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Load Environment Variables (Staging)
+        run: |
+          echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
+          
+          # Obter secrets do Azure Key Vault via OIDC
+          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
+          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          
+          echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
+
       - name: 🔐 Create Docker Secrets (Staging)
         timeout-minutes: 5
         run: |
           echo "🔐 Criando Docker Secrets para staging..."
+          
+          # Verificar se a variável está definida
+          if [ -z "$REDIS_PASSWORD" ]; then
+            echo "❌ REDIS_PASSWORD não está definida"
+            exit 1
+          fi
           
           # Criar secret do Redis no Docker Swarm
           echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
@@ -343,13 +366,30 @@ jobs:
 
   deploy-production:
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, conexao]
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🌟 Deploy to Production
     timeout-minutes: 45
     needs: [deploy-staging]
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
+
+      - name: 🔐 Azure Login via OIDC
+        uses: azure/login@v1
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Load Environment Variables (Production)
+        run: |
+          echo "🔐 Configurando variáveis de ambiente para Redis Produção..."
+          
+          # Obter secrets do Azure Key Vault via OIDC
+          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
+          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
+          
+          echo "✅ Variáveis de ambiente de produção configuradas via Azure Key Vault"
 
       - name: 🔐 Create Docker Secrets (Production)
         timeout-minutes: 5
