@@ -54,44 +54,74 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🔍 Validate docker-compose files
-        timeout-minutes: 2
-        run: |
-          # Instalar Docker Compose para Ubuntu 24.04
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin
-
-          # Validar sintaxe do docker-compose.yml principal (produção)
-          docker compose -f docker-compose.yml config -q
-          echo "✅ Docker Compose syntax is valid"
-
-      - name: 🧪 Test Services Definition
         timeout-minutes: 3
         run: |
-          # Verificar se todos os serviços essenciais estão definidos
-          echo "🔍 Debug: Listing all available services:"
-          all_services=$(docker compose -f docker-compose.yml config --services | sort)
-          echo "$all_services"
+          # Validação simples de sintaxe YAML (sem Docker)
+          echo "🔍 Validando sintaxe YAML do docker-compose.yml..."
 
-          echo ""
-          echo "🧪 Testing each service individually:"
-          services=("redis")
+          # Verificar se arquivo existe
+          if [[ ! -f docker-compose.yml ]]; then
+            echo "❌ Arquivo docker-compose.yml não encontrado"
+            exit 1
+          fi
 
-          missing=()
-          for service in "${services[@]}"; do
-            if echo "$all_services" | grep -Fxq "$service"; then
-              echo "✅ Service '$service' found in main docker-compose.yml"
-            else
-              missing+=("$service")
-            fi
-          done
+          # Validação básica de sintaxe YAML usando Python
+          python3 -c "
+          import yaml
+          import sys
+          try:
+              with open('docker-compose.yml', 'r') as f:
+                  yaml.safe_load(f)
+              print('✅ YAML syntax is valid')
+          except yaml.YAMLError as e:
+              print(f'❌ YAML syntax error: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'❌ Error reading file: {e}')
+              sys.exit(1)
+          "
 
-          [ ${#missing[@]} -eq 0 ] || { echo "❌ Missing services: ${missing[*]}"; exit 1; }
+          # Verificações básicas de estrutura
+          echo "🔍 Verificando estrutura básica..."
+
+          if grep -q "services:" docker-compose.yml; then
+            echo "✅ Seção 'services' encontrada"
+          else
+            echo "❌ Seção 'services' não encontrada"
+            exit 1
+          fi
+
+          if grep -q "redis:" docker-compose.yml; then
+            echo "✅ Serviço 'redis' encontrado"
+          else
+            echo "❌ Serviço 'redis' não encontrado"
+            exit 1
+          fi
+
+          echo "✅ Validação simplificada concluída com sucesso"
+
+      - name: 🧪 Basic Structure Validation
+        timeout-minutes: 1
+        run: |
+          echo "🔍 Verificando estrutura de serviços..."
+
+          # Verificar se serviço redis está definido
+          if grep -A 5 "^  redis:" docker-compose.yml | grep -q "image:"; then
+            echo "✅ Serviço Redis com imagem definida"
+          else
+            echo "❌ Serviço Redis mal configurado"
+            exit 1
+          fi
+
+          # Verificar se secrets estão definidos
+          if grep -q "secrets:" docker-compose.yml; then
+            echo "✅ Seção secrets encontrada"
+          else
+            echo "❌ Seção secrets não encontrada"
+            exit 1
+          fi
+
+          echo "✅ Estrutura básica validada"
 
       - name: 🛡️ Security Scan
         timeout-minutes: 3

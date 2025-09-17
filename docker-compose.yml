@@ -1,47 +1,53 @@
-
+---
+# ============================================================================
+# 🔴 CONEXÃO DE SORTE - REDIS INFRAESTRUTURA
+# ============================================================================
+# Data de Criação: 17/09/2025
+# Última Atualização: 17/09/2025
+# Responsável: Sistema Automatizado
+# Versão: 2.0.0
+# ============================================================================
+#
+# REDIS CACHE - Infraestrutura de Cache Distribuído
+# - Docker Swarm deployment
+# - Overlay encrypted network para segurança
+# - Named volumes externos para persistência
+# - Health checks otimizados para produção
+# - Secrets externos gerenciados pelo Swarm
+# ============================================================================
 
 services:
+  # ============================================================================
+  # 🔴 REDIS CACHE - Cache Distribuído
+  # ============================================================================
   redis:
     image: redis:8.2.2-alpine
     hostname: conexao-redis
-    restart: unless-stopped
     command: >
       sh -c '
-      REDIS_PASS="$$(cat /run/secrets/REDIS_PASSWORD 2>/dev/null || echo "defaultpass")"
-      REDIS_HOST_BIND="$$(cat /run/secrets/REDIS_HOST 2>/dev/null || echo "0.0.0.0")"
-      REDIS_PORT_NUM="$$(cat /run/secrets/REDIS_PORT 2>/dev/null || echo "6379")"
+      REDIS_PASS="$$(cat /run/secrets/conexao-de-sorte-redis-password 2>/dev/null || echo "defaultpass")"
       redis-server
       --requirepass "$$REDIS_PASS"
       --appendonly yes
-      --bind "$$REDIS_HOST_BIND"
-      --port "$$REDIS_PORT_NUM"
+      --bind 0.0.0.0
+      --port 6379
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
       --save 60 1000
       --protected-mode yes
       --tcp-keepalive 300
       --tcp-backlog 511'
-    # Redis deve ser acessível apenas via rede overlay interna - SEM exposição pública
     networks:
       conexao-network-swarm:
         aliases:
           - conexao-redis
           - redis
     volumes:
-      - redis-data:/data
+      - redis_data:/data
     secrets:
-      - REDIS_PASSWORD
-      - source: REDIS_HOST
-        target: /run/secrets/REDIS_HOST
-        mode: 0444
-      - source: REDIS_PORT
-        target: /run/secrets/REDIS_PORT
-        mode: 0444
-      - source: REDIS_DATABASE
-        target: /run/secrets/REDIS_DATABASE
-        mode: 0444
+      - conexao-de-sorte-redis-password
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$(cat /run/secrets/conexao-de-sorte-redis-password)", "ping"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -54,8 +60,10 @@ services:
       resources:
         limits:
           memory: 512M
+          cpus: '0.5'
         reservations:
           memory: 256M
+          cpus: '0.25'
       restart_policy:
         condition: on-failure
         delay: 5s
@@ -80,78 +88,28 @@ services:
       org.opencontainers.image.version: "8.2.2-alpine"
       conexao.service.name: "redis"
       conexao.service.type: "infrastructure"
-      # Traefik labels para monitoramento (opcional)
-      traefik.enable: "false"
+      conexao.service.environment: "production"
 
 # ============================================================================
-# SECRETS CONFIGURATION
+# 🔐 SECRETS EXTERNOS (Gerenciados pelo Docker Swarm)
 # ============================================================================
 secrets:
-  # Redis Infrastructure Secrets
-  REDIS_PASSWORD:
+  conexao-de-sorte-redis-password:
     external: true
-    name: REDIS_PASSWORD
-  REDIS_HOST:
-    external: true
-    name: REDIS_HOST
-  REDIS_PORT:
-    external: true
-    name: REDIS_PORT
-  REDIS_DATABASE:
-    external: true
-    name: REDIS_DATABASE
-
-  # Database Infrastructure Secrets (para outros microserviços)
-  DATABASE_PASSWORD:
-    external: true
-    name: DATABASE_PASSWORD
-  DATABASE_USERNAME:
-    external: true
-    name: DATABASE_USERNAME
-  DATABASE_HOST:
-    external: true
-    name: DATABASE_HOST
-  DATABASE_PORT:
-    external: true
-    name: DATABASE_PORT
-  DATABASE_PROXYSQL_PASSWORD:
-    external: true
-    name: DATABASE_PROXYSQL_PASSWORD
-  DATABASE_JDBC_URL:
-    external: true
-    name: DATABASE_JDBC_URL
-  DATABASE_R2DBC_URL:
-    external: true
-    name: DATABASE_R2DBC_URL
-  DATABASE_URL:
-    external: true
-    name: DATABASE_URL
-  DB_HOST:
-    external: true
-    name: DB_HOST
-  DB_PORT:
-    external: true
-    name: DB_PORT
-  DB_USERNAME:
-    external: true
-    name: DB_USERNAME
-  DB_PASSWORD:
-    external: true
-    name: DB_PASSWORD
+    name: conexao-de-sorte-redis-password
 
 # ============================================================================
-# VOLUMES CONFIGURATION
+# 📦 VOLUMES EXTERNOS
 # ============================================================================
 volumes:
-  redis-data:
-    driver: local
+  redis_data:
+    external: true
+    name: redis_data
 
 # ============================================================================
-# NETWORKS CONFIGURATION
+# 🌐 NETWORKS EXTERNOS
 # ============================================================================
 networks:
   conexao-network-swarm:
-    name: conexao-network-swarm
     external: true
-    driver: overlay
-    attachable: true
+    name: conexao-network-swarm
