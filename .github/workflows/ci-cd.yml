@@ -153,7 +153,7 @@ jobs:
 
   deploy-production:
     needs: validate-and-build
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     name: 🚀 Deploy to Production
     timeout-minutes: 25
     if: github.ref == 'refs/heads/main'

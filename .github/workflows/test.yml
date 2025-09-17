@@ -19,7 +19,7 @@ jobs:
           echo "✅ GitHub-hosted test completed"
 
   test-self-hosted:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
