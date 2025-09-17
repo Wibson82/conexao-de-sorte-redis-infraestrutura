@@ -1,0 +1,19 @@
+name: 🧪 Test Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🧪 Simple test
+        run: |
+          echo "✅ Test workflow working"
+          echo "📁 Files in repo:"
+          ls -la
+          echo "🔍 Docker compose exists:"
+          ls -la docker-compose.yml || echo "❌ No docker-compose.yml"
+          echo "✅ Test completed successfully"
