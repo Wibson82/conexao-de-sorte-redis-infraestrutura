@@ -192,190 +192,21 @@ jobs:
           fi
 
 # ----------------------------------------------------------------------
-# JOB 3 ▸ DEPLOY PARA STAGING
-# ----------------------------------------------------------------------
-
-  deploy-staging:
-    if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
-    name: 🚀 Deploy to Staging
-    timeout-minutes: 30
-    needs: [validate-compose, security-scan]
-    steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
-
-      - name: 🔐 Azure Login via OIDC
-        uses: azure/login@v1
-        with:
-          client-id: ${{ env.AZURE_CLIENT_ID }}
-          tenant-id: ${{ env.AZURE_TENANT_ID }}
-          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-
-      - name: 🔐 Load Environment Variables (Staging)
-        run: |
-          echo "🔐 Configurando variáveis de ambiente para Redis Staging..."
-
-          # Obter secrets do Azure Key Vault via OIDC
-          REDIS_PASSWORD=$(az keyvault secret show --name "redis-password" --vault-name "conexao-de-sorte-kv" --query "value" -o tsv)
-          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-
-          echo "✅ Variáveis de ambiente de staging configuradas via Azure Key Vault"
-
-      - name: 🔐 Create Docker Secrets (Staging)
-        timeout-minutes: 5
-        run: |
-          echo "🔐 Criando Docker Secrets para staging..."
-
-          # Verificar se a variável está definida
-          if [ -z "$REDIS_PASSWORD" ]; then
-            echo "❌ REDIS_PASSWORD não está definida"
-            exit 1
-          fi
-
-          # Criar secret do Redis no Docker Swarm
-          echo "$REDIS_PASSWORD" | docker secret create redis-password - 2>/dev/null || {
-            echo "ℹ️ Secret redis-password já existe, removendo e recriando..."
-            docker secret rm redis-password 2>/dev/null || true
-            echo "$REDIS_PASSWORD" | docker secret create redis-password -
-          }
-
-          echo "✅ Docker Secrets criados com sucesso para staging"
-
-      - name: 🔍 Validate Docker Secrets (Staging)
-        timeout-minutes: 3
-        run: |
-          echo "🔍 Validando Docker Secrets criados..."
-
-          # Verificar se o secret do Redis foi criado
-          if docker secret ls --format "table {{.Name}}" | grep -q "redis-password"; then
-            echo "✅ Secret redis-password encontrado"
-          else
-            echo "❌ Secret redis-password não encontrado"
-            exit 1
-          fi
-
-          echo "✅ Validação de secrets concluída com sucesso"
-
-      - name: 🧹 Smart Cleanup - Preserve Production Services
-        timeout-minutes: 8
-        run: |
-          set -euo pipefail
-          STACK_NAME="conexao-de-sorte-redis-staging"
-
-          echo "🧹 Iniciando limpeza inteligente preservando serviços em produção..."
-
-          # ============================================================================
-          # 🔍 VERIFICAR CONFLITOS COM CONTAINERS STANDALONE
-          # ============================================================================
-
-          echo "🔍 Verificando containers standalone que podem conflitar..."
-
-          # Lista de containers que podem conflitar com Redis
-          CONFLICTING_CONTAINERS=(
-            "conexao-redis"
-            "redis"
-          )
-
-          for container in "${CONFLICTING_CONTAINERS[@]}"; do
-            if docker ps -q -f name="^${container}$" | grep -q .; then
-              echo "⚠️ Container standalone detectado: $container"
-              echo "🛑 Parando container para evitar conflito de porta..."
-              docker stop "$container" || true
-              docker rm "$container" || true
-              echo "✅ Container $container removido"
-            else
-              echo "✅ Nenhum conflito detectado para: $container"
-            fi
-          done
-
-          # ============================================================================
-          # 🧹 LIMPEZA DE STACK ANTERIOR (SE EXISTIR)
-          # ============================================================================
-
-          if docker stack ls --format "table {{.Name}}" | grep -q "^${STACK_NAME}$"; then
-            echo "🗑️ Removendo stack anterior: $STACK_NAME"
-            docker stack rm "$STACK_NAME"
-
-            # Aguardar remoção completa
-            echo "⏳ Aguardando remoção completa da stack..."
-            timeout 120 bash -c "
-              while docker stack ls --format 'table {{.Name}}' | grep -q '^${STACK_NAME}$'; do
-                echo '  Aguardando remoção da stack...'
-                sleep 5
-              done
-            " || {
-              echo "⚠️ Timeout na remoção da stack - continuando..."
-            }
-
-            echo "✅ Stack anterior removida"
-          else
-            echo "ℹ️ Nenhuma stack anterior encontrada: $STACK_NAME"
-          fi
-
-          echo "✅ Limpeza inteligente concluída"
-
-      - name: 🚀 Deploy Redis Stack
-        timeout-minutes: 12
-        run: |
-          set -euo pipefail
-          STACK_NAME="conexao-de-sorte-redis-staging"
-
-          echo "🚀 Iniciando deploy do Redis Stack..."
-          echo "📦 Stack: $STACK_NAME"
-          echo "📁 Compose: docker-compose.yml"
-
-          # Verificar se arquivo existe
-          if [[ ! -f docker-compose.yml ]]; then
-            echo "❌ Arquivo docker-compose.yml não encontrado"
-            exit 1
-          fi
-
-          # Deploy da stack
-          echo "🔄 Executando deploy da stack..."
-          docker stack deploy -c docker-compose.yml "$STACK_NAME"
-
-          echo "✅ Stack deployada com sucesso"
-
-          # Aguardar serviços ficarem prontos
-          echo "⏳ Aguardando serviços ficarem prontos..."
-          timeout 180 bash -c "
-            while true; do
-              RUNNING=\$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
-              TOTAL=\$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
-
-              echo \"  Serviços prontos: \$RUNNING/\$TOTAL\"
-
-              if [[ \$RUNNING -eq \$TOTAL && \$TOTAL -gt 0 ]]; then
-                echo '✅ Todos os serviços estão prontos'
-                break
-              fi
-
-              sleep 10
-            done
-          " || {
-            echo "⚠️ Timeout aguardando serviços - verificando status..."
-            docker stack services "$STACK_NAME"
-          }
-
-          echo "🎉 Deploy do Redis concluído com sucesso!"
-
-# ----------------------------------------------------------------------
-# JOB 4 ▸ DEPLOY PARA PRODUÇÃO
+# JOB 3 ▸ DEPLOY PARA PRODUÇÃO
 # ----------------------------------------------------------------------
 
   deploy-production:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     name: 🌟 Deploy to Production
-    timeout-minutes: 45
-    needs: [deploy-staging]
+    timeout-minutes: 25
+    needs: [validate-compose, security-scan]
     steps:
       - name: 📥 Checkout Code
         uses: actions/checkout@v4
 
       - name: 🔐 Azure Login via OIDC
-        uses: azure/login@v1
+        uses: azure/login@v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -424,7 +255,7 @@ jobs:
         timeout-minutes: 15
         run: |
           set -euo pipefail
-          STACK_NAME="conexao-de-sorte-redis-production"
+          STACK_NAME="conexao-redis"
 
           echo "🚀 Iniciando deploy do Redis Stack para PRODUÇÃO..."
           echo "📦 Stack: $STACK_NAME"
@@ -444,7 +275,7 @@ jobs:
 
           # Aguardar serviços ficarem prontos
           echo "⏳ Aguardando serviços de produção ficarem prontos..."
-          timeout 300 bash -c "
+          timeout 180 bash -c "
             while true; do
               RUNNING=\$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
               TOTAL=\$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
@@ -474,7 +305,7 @@ jobs:
           sleep 30
 
           # Tentar conectar ao Redis usando o service name do Docker Swarm
-          REDIS_SERVICE="conexao-de-sorte-redis-production_redis"
+          REDIS_SERVICE="conexao-redis_redis"
 
           # Verificar se o serviço está rodando
           if docker service ls | grep -q "$REDIS_SERVICE"; then
@@ -502,7 +333,7 @@ jobs:
           echo "📊 RESUMO DO DEPLOY DE PRODUÇÃO - REDIS INFRASTRUCTURE"
           echo "============================================================"
           echo "🕒 Timestamp: $(date)"
-          echo "📦 Stack: conexao-de-sorte-redis-production"
+          echo "📦 Stack: conexao-redis"
           echo "🔗 Commit: ${{ github.sha }}"
           echo "👤 Autor: ${{ github.actor }}"
           echo ""
@@ -512,17 +343,17 @@ jobs:
             echo ""
             echo "🔴 Redis Infrastructure está rodando em produção"
             echo "🌐 Disponível na rede: conexao-network-swarm"
-            echo "🔍 Monitoramento: docker service logs conexao-de-sorte-redis-production_redis -f"
+            echo "🔍 Monitoramento: docker service logs conexao-redis_redis -f"
             echo ""
             echo "📋 Próximos passos:"
-            echo "  1. Verificar logs: docker service logs conexao-de-sorte-redis-production_redis"
+            echo "  1. Verificar logs: docker service logs conexao-redis_redis"
             echo "  2. Monitorar performance"
             echo "  3. Validar conectividade com outros serviços"
           else
             echo "❌ STATUS: FALHA NO DEPLOY"
             echo ""
             echo "🔧 Para debug:"
-            echo "  1. Verificar logs: docker service logs conexao-de-sorte-redis-production_redis"
-            echo "  2. Verificar status: docker stack services conexao-de-sorte-redis-production"
+            echo "  1. Verificar logs: docker service logs conexao-redis_redis"
+            echo "  2. Verificar status: docker stack services conexao-redis"
             echo "  3. Verificar secrets: docker secret ls"
           fi
