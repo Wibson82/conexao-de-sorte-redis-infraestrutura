@@ -195,11 +195,8 @@ jobs:
             echo "⚠️ Usando configurações padrão Redis (ATENÇÃO: mudar senha em produção!)"
           fi
 
-          # Mascarar secrets nos logs para segurança
+          # Mascarar apenas senha real (não configurações como porta/host/database)
           echo "::add-mask::$REDIS_PASSWORD"
-          echo "::add-mask::$REDIS_DATABASE"
-          echo "::add-mask::$REDIS_HOST"
-          echo "::add-mask::$REDIS_PORT"
 
           # Adicionar ao ambiente sem expor nos logs
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
