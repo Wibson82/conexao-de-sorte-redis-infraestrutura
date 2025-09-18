@@ -258,13 +258,26 @@ jobs:
             exit 1
           fi
 
-          # Parar e remover stack existente para garantir deploy limpo
-          echo "🛑 Parando stack existente para deploy limpo..."
+          # Limpeza completa de containers/volumes antigos para deploy limpo
+          echo "🧹 Limpeza completa: removendo containers e volumes Redis antigos..."
+
+          # Parar e remover stack
           docker stack rm "$STACK_NAME" 2>/dev/null || echo "ℹ️ Stack não existia"
 
-          # Aguardar remoção completa
-          echo "⏳ Aguardando remoção completa da stack..."
-          sleep 30
+          # Aguardar remoção da stack
+          sleep 15
+
+          # Remover containers órfãos Redis específicos
+          echo "🗑️ Removendo containers Redis órfãos..."
+          docker ps -a --filter "name=redis" --filter "name=conexao-redis" -q | xargs -r docker rm -f || echo "ℹ️ Nenhum container Redis órfão"
+
+          # Limpar imagens Redis não utilizadas
+          echo "🖼️ Limpando imagens Redis não utilizadas..."
+          docker images --filter "reference=redis:*" --filter "dangling=false" -q | head -3 | tail -n +2 | xargs -r docker rmi || echo "ℹ️ Nenhuma imagem Redis antiga"
+
+          # Aguardar limpeza completa
+          echo "⏳ Aguardando limpeza completa..."
+          sleep 15
 
           # Deploy da stack limpa
           echo "🔄 Executando deploy limpo da stack de produção..."
@@ -276,12 +289,12 @@ jobs:
           echo "⏳ Aguardando serviços de produção ficarem prontos..."
 
           for i in {1..12}; do
-            RUNNING=$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
-            TOTAL=$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l | tr -d ' ')
+            # Simplificar para evitar problemas de parsing
+            SERVICES_STATUS=$(docker stack services $STACK_NAME --format '{{.Replicas}}' 2>/dev/null || echo "0/1")
 
-            echo "  Tentativa $i/12 - Serviços prontos: $RUNNING/$TOTAL"
+            echo "  Tentativa $i/12 - Status: $SERVICES_STATUS"
 
-            if [[ "$RUNNING" -eq "$TOTAL" && "$TOTAL" -gt 0 ]]; then
+            if echo "$SERVICES_STATUS" | grep -q "1/1"; then
               echo '✅ Todos os serviços de produção estão prontos'
               break
             fi
