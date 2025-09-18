@@ -195,6 +195,10 @@ jobs:
           echo "🗑️ Removendo secrets Redis antigos..."
           docker secret rm conexao-de-sorte-redis-password 2>/dev/null || echo "ℹ️ Secret não existia"
 
+          # Aguardar Docker Swarm processar remoção antes de recriar
+          echo "⏳ Aguardando Docker Swarm processar remoção..."
+          sleep 10
+
           # Approach definitivo: usar set +e para ignorar exit codes
           set +e
 
