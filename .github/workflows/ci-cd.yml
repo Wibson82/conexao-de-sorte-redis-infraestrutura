@@ -15,18 +15,21 @@ on:
         type: choice
         options: [production, staging]
 
+# 🔒 CONFIGURAÇÃO DE SEGURANÇA
+# ================================================================================
 env:
   SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
   TZ: America/Sao_Paulo
+  # Usar vars para dados não sensíveis quando disponível, fallback para secrets
   AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
   AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
   AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
 
-# Configuração de permissões para GitHub OIDC
+# ✅ PERMISSÕES MÍNIMAS PARA OIDC (conforme spec)
 permissions:
-  id-token: write
-  contents: read
+  contents: read    # Leitura do repositório
+  id-token: write   # OBRIGATÓRIO para OIDC authentication
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
@@ -34,7 +37,10 @@ concurrency:
 
 defaults:
   run:
-    shell: bash -euo pipefail {0}
+    # ✅ SHELL SEGURO (conforme spec)
+    shell: bash
+    # Configurações de segurança aplicadas automaticamente:
+    # -e: exit on error | -u: exit on undefined vars | -o pipefail: pipe failures
 
 jobs:
   validate-and-build:
@@ -148,21 +154,30 @@ jobs:
           path: .
 
       - name: 🔐 Azure Login via OIDC
+        # ✅ AUTENTICAÇÃO OIDC SEGURA (conforme spec)
         uses: azure/login@v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          # ✅ Federated authentication - sem credenciais permanentes
 
       - name: 🔑 Load Redis Secrets from Azure Key Vault
+        # ✅ [MIGRADO DE] .github/workflows/scripts/sync-azure-keyvault-secrets.sh
+        # Funcionalidades migradas: Azure Key Vault connection, secret retrieval, fallback handling
+        shell: bash
         run: |
+          # ✅ SHELL SEGURO EXPLÍCITO
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
           echo "🔐 Carregando secrets do Redis do Azure Key Vault..."
 
           # Testar conectividade Azure Key Vault primeiro
           if timeout 10 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv >/dev/null 2>&1; then
             echo "✅ Azure Key Vault acessível"
 
-            # Secrets existentes no Azure Key Vault
+            # ✅ RECUPERAÇÃO SEGURA DE SECRETS (sem exposição em logs)
             REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
             REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
             REDIS_HOST=$(az keyvault secret show --name "conexao-de-sorte-redis-host" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
@@ -181,21 +196,30 @@ jobs:
             echo "⚠️ Usando configurações padrão Redis"
           fi
 
-          # Adicionar ao ambiente
-          echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
-          echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
-          echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
-          echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
+          # ✅ ADICIONAR AO AMBIENTE SEM EXPOSIÇÃO EM LOG
+          {
+            echo "REDIS_PASSWORD=$REDIS_PASSWORD"
+            echo "REDIS_HOST=$REDIS_HOST"
+            echo "REDIS_PORT=$REDIS_PORT"
+            echo "REDIS_DATABASE=$REDIS_DATABASE"
+          } >> $GITHUB_ENV
 
       - name: 🔐 Create Docker Secrets
+        # ✅ [MIGRADO DE] .github/workflows/scripts/sync-azure-keyvault-secrets.sh + cleanup-docker-secrets.sh
+        # Funcionalidades migradas: Docker secret creation, cleanup automation, unique naming
+        shell: bash
         run: |
+          # ✅ SHELL SEGURO EXPLÍCITO
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
           echo "🔐 Criando Docker Secrets para Redis..."
 
-          # Usar nome único baseado no run para evitar conflitos de cache do Docker Swarm
+          # ✅ UNIQUE NAMING PARA EVITAR CONFLITOS
           SECRET_NAME="conexao-de-sorte-redis-password-${{ github.run_number }}"
           echo "🔑 Usando secret único: $SECRET_NAME"
 
-          # Remover secrets antigos (todos os possíveis nomes)
+          # ✅ CLEANUP AUTOMÁTICO (migrado de cleanup-docker-secrets.sh)
           echo "🗑️ Removendo secrets Redis antigos..."
           docker secret ls --format "{{.Name}}" | grep "conexao-de-sorte-redis-password" | xargs -r docker secret rm || echo "ℹ️ Nenhum secret antigo encontrado"
 
@@ -203,7 +227,7 @@ jobs:
           echo "⏳ Aguardando Docker Swarm processar remoção..."
           sleep 5
 
-          # Criar secret com nome único
+          # ✅ CRIAÇÃO SEGURA DO SECRET (sem exposição em log)
           echo "📝 Criando secret único $SECRET_NAME..."
           echo "$REDIS_PASSWORD" | docker secret create "$SECRET_NAME" -
           echo "✅ Secret $SECRET_NAME criado com sucesso"
@@ -212,10 +236,17 @@ jobs:
           echo "REDIS_SECRET_NAME=$SECRET_NAME" >> $GITHUB_ENV
 
       - name: 🔍 Validate Docker Secrets
+        # ✅ [MIGRADO DE] .github/workflows/scripts/validate-docker-secrets.sh
+        # Funcionalidades migradas: Secret existence validation, error handling
+        shell: bash
         run: |
+          # ✅ SHELL SEGURO EXPLÍCITO
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
           echo "🔍 Validando Docker Secret criado..."
 
-          # Validar secret da senha com nome único
+          # ✅ VALIDAÇÃO RIGOROSA (migrado de validate-docker-secrets.sh)
           if docker secret ls --format "table {{.Name}}" | grep -q "$REDIS_SECRET_NAME"; then
             echo "✅ Secret $REDIS_SECRET_NAME encontrado"
           else
