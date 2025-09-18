@@ -285,6 +285,12 @@ jobs:
           echo "🔍 Status final dos serviços:"
           docker stack services "$STACK_NAME"
 
+          echo "🔍 Logs detalhados do Redis para debug:"
+          docker service logs conexao-redis_redis --tail 50 || echo "❌ Erro ao obter logs"
+
+          echo "🔍 Status detalhado do serviço:"
+          docker service inspect conexao-redis_redis --pretty || echo "❌ Erro ao inspecionar serviço"
+
           echo "🎉 Deploy do Redis PRODUÇÃO concluído com sucesso!"
 
       - name: 🔍 Health Check Redis Production
