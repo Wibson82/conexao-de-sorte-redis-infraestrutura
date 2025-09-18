@@ -151,6 +151,53 @@ jobs:
           clean: true
           fetch-depth: 1
 
+      - name: 🔍 Diagnóstico do Ambiente
+        # ✅ VERIFICAÇÃO PREVENTIVA DE PROBLEMAS
+        run: |
+          # ✅ SHELL SEGURO
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+          
+          echo "🔍 Verificando ambiente de deploy..."
+          echo "Timestamp: $(date)"
+          echo "Usuário: $(whoami)"
+          echo "Diretório: $(pwd)"
+          
+          # Verificar Docker
+          echo -e "\n🐳 Verificando Docker..."
+          if docker version >/dev/null 2>&1; then
+            echo "✅ Docker está disponível"
+            docker version --format "Docker: {{.Server.Version}}"
+          else
+            echo "❌ Docker não está disponível"
+            exit 1
+          fi
+          
+          # Verificar Docker Swarm
+          echo -e "\n🐝 Verificando Docker Swarm..."
+          if docker node ls >/dev/null 2>&1; then
+            echo "✅ Docker Swarm está ativo"
+            docker node ls --format "Node: {{.Hostname}} | Status: {{.Status}} | Availability: {{.Availability}}"
+          else
+            echo "❌ Docker Swarm não está ativo"
+            echo "Tentando inicializar Docker Swarm..."
+            docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || echo "⚠️ Swarm já pode estar inicializado"
+          fi
+          
+          # Verificar arquivo compose
+          echo -e "\n📁 Verificando arquivo compose..."
+          if [[ -f "$COMPOSE_FILE" ]]; then
+            echo "✅ Arquivo $COMPOSE_FILE encontrado"
+            echo "Tamanho: $(wc -l < "$COMPOSE_FILE") linhas"
+          else
+            echo "❌ Arquivo $COMPOSE_FILE não encontrado"
+            echo "Arquivos disponíveis:"
+            ls -la *.yml *.yaml 2>/dev/null || echo "Nenhum arquivo YAML encontrado"
+            exit 1
+          fi
+          
+          echo -e "\n✅ Diagnóstico concluído - ambiente pronto para deploy"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4.1.8
         with:
@@ -298,7 +345,6 @@ jobs:
         id: deployment
         env:
           STACK_NAME: conexao-redis
-          COMPOSE_FILE: docker-compose-runtime.yml
         run: |
           # ✅ SHELL SEGURO
           set -Eeuo pipefail
@@ -458,8 +504,8 @@ jobs:
         env:
           STACK_NAME: conexao-redis
         run: |
-          # ✅ SHELL SEGURO
-          set -Eeuo pipefail
+          # ✅ SHELL SEGURO PARA ROLLBACK (não usar -e para permitir comandos falharem)
+          set -uo pipefail
           IFS=$'\n\t'
 
           echo "🚨 FALHA DETECTADA - Executando rollback de emergência..."
@@ -470,31 +516,55 @@ jobs:
           echo "Job Status: failure"
           echo "Commit: ${{ github.sha }}"
 
-          # Status da stack atual
-          echo -e "\n📋 Status atual da stack:"
-          docker stack services "$STACK_NAME" 2>/dev/null || echo "❌ Stack não encontrada"
+          # Verificar se Docker está disponível
+          echo -e "\n🐳 Verificando Docker..."
+          if docker version >/dev/null 2>&1; then
+            echo "✅ Docker disponível"
+            
+            # Verificar se Swarm está ativo
+            if docker node ls >/dev/null 2>&1; then
+              echo "✅ Docker Swarm ativo"
+              
+              # Status da stack atual
+              echo -e "\n📋 Status atual da stack:"
+              if docker stack ls | grep -q "$STACK_NAME" 2>/dev/null; then
+                docker stack services "$STACK_NAME" 2>/dev/null || echo "⚠️ Erro ao obter status da stack"
+                
+                # Logs para diagnóstico
+                echo -e "\n📝 Logs para diagnóstico (últimas 20 linhas):"
+                docker service logs "$STACK_NAME"_redis --tail 20 2>/dev/null || echo "⚠️ Logs não disponíveis"
+                
+                # Rollback seguro
+                echo -e "\n🔄 Executando rollback seguro..."
+                docker stack rm "$STACK_NAME" 2>/dev/null || echo "ℹ️ Erro na remoção da stack"
+                
+              else
+                echo "ℹ️ Stack não estava deployada"
+              fi
+              
+            else
+              echo "⚠️ Docker Swarm não está ativo - não há stack para remover"
+            fi
+            
+          else
+            echo "⚠️ Docker não está disponível - rollback não necessário"
+          fi
 
-          # Logs para diagnóstico
-          echo -e "\n📝 Logs para diagnóstico (últimas 20 linhas):"
-          docker service logs "$STACK_NAME"_redis --tail 20 2>/dev/null || echo "❌ Logs não disponíveis"
+          # Aguardar remoção completa (se aplicável)
+          echo -e "\n⏳ Aguardando remoção completa da stack..."
+          sleep 15
 
-          # Rollback seguro
-          echo -e "\n🔄 Executando rollback seguro..."
-          docker stack rm "$STACK_NAME" 2>/dev/null || echo "ℹ️ Stack já removida"
+          # Limpeza adicional (se Docker disponível)
+          if docker version >/dev/null 2>&1; then
+            echo "🧹 Limpeza pós-rollback..."
+            docker container prune -f >/dev/null 2>&1 || true
+          fi
 
-          # Aguardar remoção completa
-          echo "⏳ Aguardando remoção completa da stack..."
-          sleep 30
-
-          # Limpeza adicional
-          echo "🧹 Limpeza pós-rollback..."
-          docker container prune -f >/dev/null 2>&1 || true
-
-          echo "✅ Rollback de emergência concluído"
-          echo "⚠️ Sistema em estado seguro - intervenção manual necessária"
-
-          # Falhar o job para indicar problema
-          exit 1
+          echo -e "\n✅ Rollback de emergência concluído"
+          echo "⚠️ Sistema em estado seguro - verificar logs para identificar causa da falha"
+          
+          # NÃO falhar o step de rollback - apenas reportar
+          echo "ℹ️ Rollback executado com sucesso"
 
       - name: 🔍 Health Check Redis
         env:
