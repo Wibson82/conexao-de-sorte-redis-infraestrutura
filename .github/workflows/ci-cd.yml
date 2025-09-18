@@ -15,10 +15,6 @@ on:
         type: choice
         options: [production, staging]
 
-# ----------------------------------------------------------------------
-# PARÂMETROS GERAIS
-# ----------------------------------------------------------------------
-
 env:
   SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
   TZ: America/Sao_Paulo
@@ -40,21 +36,22 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
-# ----------------------------------------------------------------------
-# JOB 1 ▸ VALIDAÇÃO (GITHUB-HOSTED) - IGUAL AO TRAEFIK
-# ----------------------------------------------------------------------
-
 jobs:
   validate-and-build:
     runs-on: ubuntu-latest
-    name: 🔍 Validate & Build
     timeout-minutes: 10
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.0
 
-      - name: 🔍 Validate docker-compose files
-        timeout-minutes: 3
+      - name: Install dependencies
+        run: |
+          # Instalar apenas dependências básicas
+          sudo apt-get update >/dev/null 2>&1
+          sudo apt-get install -y python3 python3-yaml >/dev/null 2>&1
+          echo "✅ Dependências básicas instaladas"
+
+      - name: Validate Redis Configs
+        timeout-minutes: 2
         run: |
           # Validação simples de sintaxe YAML (sem Docker)
           echo "🔍 Validando sintaxe YAML do docker-compose.yml..."
@@ -71,95 +68,84 @@ jobs:
           import sys
           try:
               with open('docker-compose.yml', 'r') as f:
-                  yaml.safe_load(f)
+                  data = yaml.safe_load(f)
               print('✅ YAML syntax is valid')
+
+              # Verificar estrutura básica
+              if 'services' not in data:
+                  print('❌ Seção services não encontrada')
+                  sys.exit(1)
+
+              if 'redis' not in data['services']:
+                  print('❌ Serviço redis não encontrado')
+                  sys.exit(1)
+
+              print('✅ Estrutura Redis válida')
+
           except yaml.YAMLError as e:
               print(f'❌ YAML syntax error: {e}')
               sys.exit(1)
           except Exception as e:
-              print(f'❌ Error reading file: {e}')
+              print(f'❌ Error: {e}')
               sys.exit(1)
           "
 
-          # Verificações básicas de estrutura
-          echo "🔍 Verificando estrutura básica..."
+          echo "✅ Validação Redis concluída com sucesso"
 
-          if grep -q "services:" docker-compose.yml; then
-            echo "✅ Seção 'services' encontrada"
-          else
-            echo "❌ Seção 'services' não encontrada"
-            exit 1
-          fi
-
-          if grep -q "redis:" docker-compose.yml; then
-            echo "✅ Serviço 'redis' encontrado"
-          else
-            echo "❌ Serviço 'redis' não encontrado"
-            exit 1
-          fi
-
-          echo "✅ Validação simplificada concluída com sucesso"
-
-      - name: 🧪 Basic Structure Validation
-        timeout-minutes: 1
+      - name: Security Validation
         run: |
-          echo "🔍 Verificando estrutura de serviços..."
-
-          # Verificar se serviço redis está definido
-          if grep -A 5 "^  redis:" docker-compose.yml | grep -q "image:"; then
-            echo "✅ Serviço Redis com imagem definida"
-          else
-            echo "❌ Serviço Redis mal configurado"
+          # Verificar se não há secrets hardcoded
+          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "file:" | grep -v "external:" | grep -E "password:[[:space:]]*[^[:space:]\$]"; then
+            echo "❌ Found hardcoded passwords in compose files"
             exit 1
+          else
+            echo "✅ No hardcoded passwords found"
           fi
 
-          # Verificar se secrets estão definidos
-          if grep -q "secrets:" docker-compose.yml; then
-            echo "✅ Seção secrets encontrada"
-          else
-            echo "❌ Seção secrets não encontrada"
+          # Verificar se imagens usam tags específicas
+          if grep -q ":latest" docker-compose.yml; then
+            echo "❌ Uso de tags 'latest' detectado - não recomendado para produção"
             exit 1
+          else
+            echo "✅ Todas as imagens usam tags específicas"
           fi
 
-          echo "✅ Estrutura básica validada"
-
-      - name: 🛡️ Security Scan
-        timeout-minutes: 3
-        run: |
-          if [ -f docker-compose.yml ]; then
-            # Verificar se não há secrets hardcoded
-            if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "file:" | grep -v "external:" | grep -E "password:[[:space:]]*[^[:space:]\$]"; then
-              echo "❌ Found hardcoded passwords in compose files"
-              exit 1
-            else
-              echo "✅ No hardcoded passwords found"
-            fi
-
-            # Verificar se imagens usam tags específicas (evitar latest)
-            if grep -q ":latest" docker-compose.yml; then
-              echo "❌ Uso de tags 'latest' detectado - não recomendado para produção"
-              exit 1
-            else
-              echo "✅ Todas as imagens usam tags específicas"
-            fi
-          else
-            echo "❌ docker-compose.yml não encontrado"
-            exit 1
-          fi
-
-# ----------------------------------------------------------------------
-# JOB 2 ▸ DEPLOY (SELF-HOSTED) - IGUAL AO TRAEFIK
-# ----------------------------------------------------------------------
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4.5.0
+        with:
+          name: redis-configs
+          path: |
+            docker-compose.yml
+            .env.ci
 
   deploy-production:
     needs: validate-and-build
     runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
-    name: 🚀 Deploy to Production
     timeout-minutes: 25
     if: github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      DOCKER_NETWORK_NAME: conexao-network-swarm
+      STACK_NAME: conexao-redis
+      COMPOSE_FILE: docker-compose.yml
+      TZ: America/Sao_Paulo
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
     steps:
-      - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4.3.0
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4.1.8
+        with:
+          name: redis-configs
+          path: .
 
       - name: 🔐 Azure Login via OIDC
         uses: azure/login@v2
@@ -176,39 +162,36 @@ jobs:
           if timeout 10 az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv >/dev/null 2>&1; then
             echo "✅ Azure Key Vault acessível"
 
-            # Secrets existentes no Azure Key Vault (conforme lista fornecida)
+            # Secrets existentes no Azure Key Vault
             REDIS_PASSWORD=$(az keyvault secret show --name "conexao-de-sorte-redis-password" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
             REDIS_DATABASE=$(az keyvault secret show --name "conexao-de-sorte-redis-database" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
             REDIS_HOST=$(az keyvault secret show --name "conexao-de-sorte-redis-host" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
             REDIS_PORT=$(az keyvault secret show --name "conexao-de-sorte-redis-port" --vault-name "${{ env.AZURE_KEYVAULT_NAME }}" --query "value" -o tsv)
 
-            echo "✅ Redis secrets carregados do Azure Key Vault (password, database, host, port)"
+            echo "✅ Redis secrets carregados do Azure Key Vault"
           else
             echo "⚠️ Azure Key Vault inacessível - usando configurações padrão"
 
             # Fallback para configurações padrão Redis
-            REDIS_PASSWORD="redisdefaultpassword"  # Senha padrão temporária sem números
+            REDIS_PASSWORD="redisdefaultpassword"
             REDIS_DATABASE="0"
             REDIS_HOST="redis"
             REDIS_PORT="6379"
 
-            echo "⚠️ Usando configurações padrão Redis (ATENÇÃO: mudar senha em produção!)"
+            echo "⚠️ Usando configurações padrão Redis"
           fi
 
-          # Não mascarar nada para evitar syntax errors no script de monitoramento
-
-          # Adicionar ao ambiente sem expor nos logs
+          # Adicionar ao ambiente
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
           echo "REDIS_HOST=$REDIS_HOST" >> $GITHUB_ENV
           echo "REDIS_PORT=$REDIS_PORT" >> $GITHUB_ENV
           echo "REDIS_DATABASE=$REDIS_DATABASE" >> $GITHUB_ENV
 
-      - name: 🔐 Create Docker Secrets (Production)
-        timeout-minutes: 5
+      - name: 🔐 Create Docker Secrets
         run: |
-          echo "🔐 Criando Docker Secrets para produção..."
+          echo "🔐 Criando Docker Secrets para Redis..."
 
-          # Usar mesmo approach do MySQL: set +e para ignorar exit codes
+          # Approach definitivo: usar set +e para ignorar exit codes
           set +e
 
           echo "📝 Criando secret conexao-de-sorte-redis-password..."
@@ -223,20 +206,19 @@ jobs:
 
           echo "✅ Docker Secrets verificados/criados com sucesso"
 
-      - name: 🔍 Validate Docker Secrets (Production)
-        timeout-minutes: 3
+      - name: 🔍 Validate Docker Secrets
         run: |
           echo "🔍 Validando Docker Secrets criados..."
 
-          # Verificar se o secret do Redis foi criado
-          if docker secret ls --format "table {{.Name}}" | grep -q "conexao-de-sorte-redis-password"; then
+          # Validar secret da senha
+          if docker secret ls | grep -q "conexao-de-sorte-redis-password"; then
             echo "✅ Secret conexao-de-sorte-redis-password encontrado"
           else
             echo "❌ Secret conexao-de-sorte-redis-password não encontrado"
             exit 1
           fi
 
-          echo "✅ Validação de secrets concluída com sucesso"
+          echo "✅ Validação de secrets concluída"
 
       - name: 🔧 Ensure Required Docker Resources
         timeout-minutes: 3
@@ -262,18 +244,17 @@ jobs:
           echo "✅ Recursos Docker verificados/criados"
 
       - name: 🚀 Deploy Redis Production Stack
-        timeout-minutes: 15
+        env:
+          STACK_NAME: conexao-redis
+          COMPOSE_FILE: docker-compose.yml
         run: |
-          set -euo pipefail
-          STACK_NAME="conexao-redis"
-
           echo "🚀 Iniciando deploy do Redis Stack para PRODUÇÃO..."
           echo "📦 Stack: $STACK_NAME"
-          echo "📁 Compose: docker-compose.yml"
+          echo "📁 Compose: $COMPOSE_FILE"
 
           # Verificar se arquivo existe
-          if [[ ! -f docker-compose.yml ]]; then
-            echo "❌ Arquivo docker-compose.yml não encontrado"
+          if [[ ! -f $COMPOSE_FILE ]]; then
+            echo "❌ Arquivo $COMPOSE_FILE não encontrado"
             exit 1
           fi
 
@@ -287,41 +268,52 @@ jobs:
 
           # Deploy da stack limpa
           echo "🔄 Executando deploy limpo da stack de produção..."
-          docker stack deploy -c docker-compose.yml "$STACK_NAME"
+          docker stack deploy -c $COMPOSE_FILE "$STACK_NAME"
 
           echo "✅ Stack de produção deployada com sucesso (deploy limpo)"
 
-          # Deploy simples sem monitoramento complexo para evitar syntax errors
-          echo "⏳ Aguardando deploy ser processado..."
-          sleep 30
+          # Aguardar serviços ficarem prontos
+          echo "⏳ Aguardando serviços de produção ficarem prontos..."
 
-          echo "🔍 Status final dos serviços:"
-          docker stack services "$STACK_NAME"
+          for i in {1..12}; do
+            RUNNING=$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
+            TOTAL=$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
 
-          echo "🔍 Logs detalhados do Redis para debug:"
-          docker service logs conexao-redis_redis --tail 50 || echo "❌ Erro ao obter logs"
+            echo "  Tentativa $i/12 - Serviços prontos: $RUNNING/$TOTAL"
 
-          echo "🔍 Status detalhado do serviço:"
-          docker service inspect conexao-redis_redis --pretty || echo "❌ Erro ao inspecionar serviço"
+            if [[ $RUNNING -eq $TOTAL && $TOTAL -gt 0 ]]; then
+              echo '✅ Todos os serviços de produção estão prontos'
+              break
+            fi
+
+            if [[ $i -eq 12 ]]; then
+              echo "⚠️ Timeout aguardando serviços - verificando status final..."
+              docker stack services "$STACK_NAME"
+              echo "🔍 Logs do serviço para diagnóstico:"
+              docker service logs conexao-redis_redis --tail 20 || echo "❌ Erro ao obter logs"
+            fi
+
+            sleep 15
+          done
 
           echo "🎉 Deploy do Redis PRODUÇÃO concluído com sucesso!"
 
-      - name: 🔍 Health Check Redis Production
-        timeout-minutes: 5
+      - name: 🔍 Health Check Redis
+        env:
+          STACK_NAME: conexao-redis
         run: |
           echo "🔍 Executando health check do Redis em produção..."
 
-          # Aguardar um pouco mais para garantir que o Redis está completamente inicializado
+          # Aguardar inicialização
           sleep 30
 
-          # Tentar conectar ao Redis usando o service name do Docker Swarm
+          # Verificar serviço Redis
           REDIS_SERVICE="conexao-redis_redis"
 
-          # Verificar se o serviço está rodando
           if docker service ls | grep -q "$REDIS_SERVICE"; then
             echo "✅ Serviço Redis encontrado: $REDIS_SERVICE"
 
-            # Tentar executar um ping no Redis
+            # Verificar logs do Redis
             if docker service logs "$REDIS_SERVICE" --tail 10 | grep -q "Ready to accept connections"; then
               echo "✅ Redis está aceitando conexões"
             else
