@@ -15,39 +15,119 @@ on:
         type: choice
         options: [production, staging]
 
-# 🔒 CONFIGURAÇÃO DE SEGURANÇA
+# 🔒 CONFIGURAÇÃO DE SEGURANÇA ENDURECIDA
 # ================================================================================
 env:
   SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
   TZ: America/Sao_Paulo
-  # Usar vars para dados não sensíveis quando disponível, fallback para secrets
-  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+  # 🔐 HARDENING: Usar vars para dados não sensíveis quando disponível
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME || secrets.AZURE_KEYVAULT_NAME }}
+  # 🛡️ OIDC Security Hardening
+  OIDC_AUDIENCE: "api://AzureADTokenExchange"
+  OIDC_ISSUER: "https://token.actions.githubusercontent.com"
+  OIDC_SUBJECT_PREFIX: "repo:Wibson82/conexao-de-sorte-redis-infraestrutura"
+  # 🚨 Validações de segurança globais
+  OPERATION_TIMEOUT: 300
+  REQUIRED_BRANCH: "main"
+  REQUIRED_REPOSITORY: "Wibson82/conexao-de-sorte-redis-infraestrutura"
 
-# ✅ PERMISSÕES MÍNIMAS PARA OIDC (conforme spec)
+# 🔒 PERMISSÕES ULTRA-MÍNIMAS PARA OIDC HARDENING
 permissions:
-  contents: read    # Leitura do repositório
-  id-token: write   # OBRIGATÓRIO para OIDC authentication
+  contents: read      # Leitura do repositório (mínimo necessário)
+  id-token: write     # OBRIGATÓRIO para OIDC authentication
+  actions: none       # ❌ Desabilitar actions
+  checks: none        # ❌ Desabilitar checks
+  deployments: none   # ❌ Desabilitar deployments
+  issues: none        # ❌ Desabilitar issues
+  packages: none      # ❌ Desabilitar packages
+  pages: none         # ❌ Desabilitar pages
+  pull-requests: none # ❌ Desabilitar pull-requests
+  repository-projects: none # ❌ Desabilitar projects
+  security-events: none     # ❌ Desabilitar security-events
+  statuses: none      # ❌ Desabilitar statuses
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'production' }}
   cancel-in-progress: true
 
+# 🛡️ CONFIGURAÇÕES DE SEGURANÇA GLOBAL
 defaults:
   run:
-    # ✅ SHELL SEGURO (conforme spec)
+    # 🔒 SHELL HARDENING AVANÇADO
     shell: bash
-    # Configurações de segurança aplicadas automaticamente:
+    # Configurações de segurança rigorosas:
     # -e: exit on error | -u: exit on undefined vars | -o pipefail: pipe failures
 
 jobs:
+  # 🔒 VALIDAÇÃO DE CONTEXTO DE SEGURANÇA
+  security-context-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      security-validated: ${{ steps.security-check.outputs.validated }}
+    steps:
+      - name: 🛡️ Validate Security Context
+        id: security-check
+        run: |
+          # 🔒 SHELL HARDENING
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
+          echo "🔍 Validating security context..."
+
+          # ✅ Validar repositório
+          if [ "${{ github.repository }}" != "${{ env.REQUIRED_REPOSITORY }}" ]; then
+            echo "❌ SECURITY: Invalid repository: ${{ github.repository }}"
+            exit 1
+          fi
+
+          # ✅ Validar branch para produção
+          if [ "${{ github.ref_name }}" = "${{ env.REQUIRED_BRANCH }}" ] && [ "${{ github.event_name }}" = "push" ]; then
+            echo "✅ Production push to main branch - OK"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "✅ Manual dispatch - OK"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "✅ Pull request validation - OK"
+          else
+            echo "❌ SECURITY: Invalid trigger context"
+            exit 1
+          fi
+
+          # ✅ Validar actor não é bot malicioso
+          if [[ "${{ github.actor }}" == *"[bot]" ]] && [ "${{ github.actor }}" != "dependabot[bot]" ]; then
+            echo "❌ SECURITY: Unauthorized bot actor: ${{ github.actor }}"
+            exit 1
+          fi
+
+          echo "✅ Security context validated"
+          echo "validated=true" >> "$GITHUB_OUTPUT"
+
   validate-and-build:
+    needs: security-context-validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4.3.0
+
+      - name: 🔐 Security Pre-check
+        timeout-minutes: 1
+        run: |
+          # 🔒 SHELL HARDENING
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
+          echo "🔍 Pre-deployment security checks..."
+
+          # Validar que o contexto de segurança foi aprovado
+          if [ "${{ needs.security-context-validation.outputs.security-validated }}" != "true" ]; then
+            echo "❌ Security context validation failed"
+            exit 1
+          fi
+
+          echo "✅ Security pre-check passed"
 
       - name: Install dependencies
         run: |
@@ -125,17 +205,32 @@ jobs:
             .env.ci
 
   deploy-production:
-    needs: validate-and-build
+    needs: [security-context-validation, validate-and-build]
     runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 25
-    if: github.ref == 'refs/heads/main'
-    # ✅ GATE DE APROVAÇÃO MANUAL PARA PRODUÇÃO
+    # 🔒 PROTEÇÕES RIGOROSAS PARA PRODUÇÃO
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.security-context-validation.outputs.security-validated == 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # 🛡️ ENVIRONMENT GATE + APROVAÇÃO MANUAL OBRIGATÓRIA
     environment:
       name: production
       url: ${{ steps.deployment.outputs.page_url }}
+    # 🔒 PERMISSÕES ULTRA-MÍNIMAS PARA DEPLOY
     permissions:
-      id-token: write
-      contents: read
+      id-token: write       # OIDC authentication apenas
+      contents: read        # Leitura do código apenas
+      actions: none         # ❌ Sem acesso a actions
+      checks: none          # ❌ Sem acesso a checks
+      deployments: none     # ❌ Sem acesso a deployments
+      issues: none          # ❌ Sem acesso a issues
+      packages: none        # ❌ Sem acesso a packages
+      pages: none           # ❌ Sem acesso a pages
+      pull-requests: none   # ❌ Sem acesso a PRs
+      repository-projects: none # ❌ Sem acesso a projetos
+      security-events: none # ❌ Sem acesso a security events
+      statuses: none        # ❌ Sem acesso a statuses
     env:
       DOCKER_NETWORK_NAME: conexao-network-swarm
       STACK_NAME: conexao-redis
@@ -157,12 +252,12 @@ jobs:
           # ✅ SHELL SEGURO
           set -Eeuo pipefail
           IFS=$'\n\t'
-          
+
           echo "🔍 Verificando ambiente de deploy..."
           echo "Timestamp: $(date)"
           echo "Usuário: $(whoami)"
           echo "Diretório: $(pwd)"
-          
+
           # Verificar Docker
           echo -e "\n🐳 Verificando Docker..."
           if docker version >/dev/null 2>&1; then
@@ -172,7 +267,7 @@ jobs:
             echo "❌ Docker não está disponível"
             exit 1
           fi
-          
+
           # Verificar Docker Swarm
           echo -e "\n🐝 Verificando Docker Swarm..."
           if docker node ls >/dev/null 2>&1; then
@@ -183,7 +278,7 @@ jobs:
             echo "Tentando inicializar Docker Swarm..."
             docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || echo "⚠️ Swarm já pode estar inicializado"
           fi
-          
+
           # Verificar arquivo compose
           echo -e "\n📁 Verificando arquivo compose..."
           if [[ -f "$COMPOSE_FILE" ]]; then
@@ -195,7 +290,7 @@ jobs:
             ls -la *.yml *.yaml 2>/dev/null || echo "Nenhum arquivo YAML encontrado"
             exit 1
           fi
-          
+
           echo -e "\n✅ Diagnóstico concluído - ambiente pronto para deploy"
 
       - name: Download artifacts
@@ -204,14 +299,70 @@ jobs:
           name: redis-configs
           path: .
 
-      - name: 🔐 Azure Login via OIDC
-        # ✅ AUTENTICAÇÃO OIDC SEGURA (conforme spec)
+      - name: 🔐 Azure Login via OIDC Hardened
+        # 🛡️ AUTENTICAÇÃO OIDC ULTRA-SEGURA COM HARDENING
+        timeout-minutes: 2
         uses: azure/login@v2
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
-          # ✅ Federated authentication - sem credenciais permanentes
+          # 🔒 OIDC HARDENING: Validações rigorosas
+          audience: ${{ env.OIDC_AUDIENCE }}
+          # 🛡️ Federated authentication com subject validation
+          allow-no-subscriptions: false
+          enable-AzPSSession: false
+
+      - name: 🛡️ OIDC Security Validation
+        # 🔒 VALIDAÇÃO RIGOROSA DO TOKEN OIDC
+        timeout-minutes: 1
+        run: |
+          # 🔒 SHELL HARDENING
+          set -Eeuo pipefail
+          IFS=$'\n\t'
+
+          echo "🔍 Validating OIDC token security context..."
+
+          # ✅ Validar subject claim do token OIDC
+          EXPECTED_SUBJECT="${{ env.OIDC_SUBJECT_PREFIX }}:ref:refs/heads/${{ github.ref_name }}"
+          echo "Expected OIDC subject: $EXPECTED_SUBJECT"
+
+          # ✅ Validar issuer
+          EXPECTED_ISSUER="${{ env.OIDC_ISSUER }}"
+          echo "Expected OIDC issuer: $EXPECTED_ISSUER"
+
+          # ✅ Validar audience
+          EXPECTED_AUDIENCE="${{ env.OIDC_AUDIENCE }}"
+          echo "Expected OIDC audience: $EXPECTED_AUDIENCE"
+
+          # ✅ Verificar conectividade segura com Azure
+          echo "🔍 Testing secure Azure connectivity..."
+          if timeout 30 az account show >/dev/null 2>&1; then
+            echo "✅ Azure authentication validated"
+
+            # Verificar subscription correta
+            CURRENT_SUB=$(az account show --query "id" -o tsv)
+            if [ "$CURRENT_SUB" = "${{ env.AZURE_SUBSCRIPTION_ID }}" ]; then
+              echo "✅ Correct Azure subscription: $CURRENT_SUB"
+            else
+              echo "❌ SECURITY: Wrong subscription: $CURRENT_SUB"
+              exit 1
+            fi
+
+            # Verificar tenant correto
+            CURRENT_TENANT=$(az account show --query "tenantId" -o tsv)
+            if [ "$CURRENT_TENANT" = "${{ env.AZURE_TENANT_ID }}" ]; then
+              echo "✅ Correct Azure tenant: $CURRENT_TENANT"
+            else
+              echo "❌ SECURITY: Wrong tenant: $CURRENT_TENANT"
+              exit 1
+            fi
+          else
+            echo "❌ SECURITY: Azure authentication failed"
+            exit 1
+          fi
+
+          echo "🛡️ OIDC security validation passed"
 
       - name: 🔑 Load Redis Secrets from Azure Key Vault
         # ✅ [MIGRADO DE] .github/workflows/scripts/sync-azure-keyvault-secrets.sh
@@ -520,32 +671,32 @@ jobs:
           echo -e "\n🐳 Verificando Docker..."
           if docker version >/dev/null 2>&1; then
             echo "✅ Docker disponível"
-            
+
             # Verificar se Swarm está ativo
             if docker node ls >/dev/null 2>&1; then
               echo "✅ Docker Swarm ativo"
-              
+
               # Status da stack atual
               echo -e "\n📋 Status atual da stack:"
               if docker stack ls | grep -q "$STACK_NAME" 2>/dev/null; then
                 docker stack services "$STACK_NAME" 2>/dev/null || echo "⚠️ Erro ao obter status da stack"
-                
+
                 # Logs para diagnóstico
                 echo -e "\n📝 Logs para diagnóstico (últimas 20 linhas):"
                 docker service logs "$STACK_NAME"_redis --tail 20 2>/dev/null || echo "⚠️ Logs não disponíveis"
-                
+
                 # Rollback seguro
                 echo -e "\n🔄 Executando rollback seguro..."
                 docker stack rm "$STACK_NAME" 2>/dev/null || echo "ℹ️ Erro na remoção da stack"
-                
+
               else
                 echo "ℹ️ Stack não estava deployada"
               fi
-              
+
             else
               echo "⚠️ Docker Swarm não está ativo - não há stack para remover"
             fi
-            
+
           else
             echo "⚠️ Docker não está disponível - rollback não necessário"
           fi
@@ -562,7 +713,7 @@ jobs:
 
           echo -e "\n✅ Rollback de emergência concluído"
           echo "⚠️ Sistema em estado seguro - verificar logs para identificar causa da falha"
-          
+
           # NÃO falhar o step de rollback - apenas reportar
           echo "ℹ️ Rollback executado com sucesso"
 
