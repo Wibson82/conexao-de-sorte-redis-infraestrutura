@@ -272,11 +272,19 @@ jobs:
             exit 1
           fi
 
-          # Deploy da stack
-          echo "🔄 Executando deploy da stack de produção..."
+          # Parar e remover stack existente para garantir deploy limpo
+          echo "🛑 Parando stack existente para deploy limpo..."
+          docker stack rm "$STACK_NAME" 2>/dev/null || echo "ℹ️ Stack não existia"
+
+          # Aguardar remoção completa
+          echo "⏳ Aguardando remoção completa da stack..."
+          sleep 30
+
+          # Deploy da stack limpa
+          echo "🔄 Executando deploy limpo da stack de produção..."
           docker stack deploy -c docker-compose.yml "$STACK_NAME"
 
-          echo "✅ Stack de produção deployada com sucesso"
+          echo "✅ Stack de produção deployada com sucesso (deploy limpo)"
 
           # Deploy simples sem monitoramento complexo para evitar syntax errors
           echo "⏳ Aguardando deploy ser processado..."
