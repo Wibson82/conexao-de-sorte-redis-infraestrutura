@@ -277,11 +277,11 @@ jobs:
 
           for i in {1..12}; do
             RUNNING=$(docker stack services $STACK_NAME --format 'table {{.Replicas}}' | grep -v REPLICAS | grep -c '1/1' || echo '0')
-            TOTAL=$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l)
+            TOTAL=$(docker stack services $STACK_NAME --format 'table {{.Name}}' | grep -v NAME | wc -l | tr -d ' ')
 
             echo "  Tentativa $i/12 - Serviços prontos: $RUNNING/$TOTAL"
 
-            if [[ $RUNNING -eq $TOTAL && $TOTAL -gt 0 ]]; then
+            if [[ "$RUNNING" -eq "$TOTAL" && "$TOTAL" -gt 0 ]]; then
               echo '✅ Todos os serviços de produção estão prontos'
               break
             fi
