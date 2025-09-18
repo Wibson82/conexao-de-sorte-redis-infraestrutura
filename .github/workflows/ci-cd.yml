@@ -208,13 +208,18 @@ jobs:
         run: |
           echo "🔐 Criando Docker Secrets para produção..."
 
-          # Verificar se secret existe e criar apenas se necessário
-          if docker secret ls --format "table {{.Name}}" | grep -q "conexao-de-sorte-redis-password"; then
-            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe - reutilizando"
+          # Usar mesmo approach do MySQL: set +e para ignorar exit codes
+          set +e
+
+          echo "📝 Criando secret conexao-de-sorte-redis-password..."
+          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
+          if [ $? -eq 0 ]; then
+            echo "✅ Secret conexao-de-sorte-redis-password criado"
           else
-            echo "📝 Criando novo secret conexao-de-sorte-redis-password..."
-            echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
+            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe - reutilizando"
           fi
+
+          set -e
 
           echo "✅ Docker Secrets verificados/criados com sucesso"
 
