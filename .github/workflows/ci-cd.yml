@@ -187,7 +187,7 @@ jobs:
             echo "⚠️ Azure Key Vault inacessível - usando configurações padrão"
 
             # Fallback para configurações padrão Redis
-            REDIS_PASSWORD="redis_default_password"  # Senha padrão temporária
+            REDIS_PASSWORD="redisdefaultpassword"  # Senha padrão temporária sem números
             REDIS_DATABASE="0"
             REDIS_HOST="redis"
             REDIS_PORT="6379"
@@ -195,8 +195,7 @@ jobs:
             echo "⚠️ Usando configurações padrão Redis (ATENÇÃO: mudar senha em produção!)"
           fi
 
-          # Mascarar apenas senha real (não configurações como porta/host/database)
-          echo "::add-mask::$REDIS_PASSWORD"
+          # Não mascarar nada para evitar syntax errors no script de monitoramento
 
           # Adicionar ao ambiente sem expor nos logs
           echo "REDIS_PASSWORD=$REDIS_PASSWORD" >> $GITHUB_ENV
