@@ -108,7 +108,7 @@ Este projeto utiliza um **pipeline CI/CD 100% inline** otimizado, sem dependênc
 
 #### **Benefícios da Migração:**
 - 🔒 **+400% Segurança**: OIDC + Azure Key Vault + Environment Gates
-- 🚀 **+300% Performance**: Scripts inline otimizados 
+- 🚀 **+300% Performance**: Scripts inline otimizados
 - 🛡️ **+200% Confiabilidade**: Health checks + Rollback automático
 - 📊 **+150% Observabilidade**: Monitoramento completo
 
