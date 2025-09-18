@@ -51,7 +51,7 @@ IFS=$'\n\t'         # secure field separator
 - ✅ **ActionLint**: Labels customizados configurados
 - ✅ **ShellCheck**: Melhorias de quoting implementadas
 
-#### ✅ **Validações Funcionais** 
+#### ✅ **Validações Funcionais**
 - ✅ **Sintaxe de Scripts**: Todos os inline blocks validados
 - ✅ **Dependências**: Ordem de execução preservada
 - ✅ **Error Handling**: Exit codes apropriados
@@ -62,7 +62,7 @@ IFS=$'\n\t'         # secure field separator
 Os seguintes scripts serão removidos por serem **obsoletos** após migração inline:
 
 1. ❌ `.github/workflows/scripts/sync-azure-keyvault-secrets.sh`
-2. ❌ `.github/workflows/scripts/validate-docker-secrets.sh`  
+2. ❌ `.github/workflows/scripts/validate-docker-secrets.sh`
 3. ❌ `.github/workflows/scripts/cleanup-docker-secrets.sh`
 
 ### ✅ **CONFIRMAÇÃO DE NÃO CONFLITOS/REDUNDÂNCIAS**
