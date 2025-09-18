@@ -191,6 +191,10 @@ jobs:
         run: |
           echo "🔐 Criando Docker Secrets para Redis..."
 
+          # Remover secrets antigos para garantir uso dos novos valores do Azure Key Vault
+          echo "🗑️ Removendo secrets Redis antigos..."
+          docker secret rm conexao-de-sorte-redis-password 2>/dev/null || echo "ℹ️ Secret não existia"
+
           # Approach definitivo: usar set +e para ignorar exit codes
           set +e
 
