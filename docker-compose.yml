@@ -25,7 +25,7 @@ services:
     hostname: conexao-redis
     command: >
       sh -c '
-      REDIS_PASS="$$(cat /run/secrets/conexao-de-sorte-redis-password 2>/dev/null || echo "defaultpass")"
+      REDIS_PASS="$$(cat /run/secrets/conexao-de-sorte-redis-password 2>/dev/null || echo "defaultpass")";
       redis-server
       --requirepass "$$REDIS_PASS"
       --appendonly yes
@@ -36,7 +36,8 @@ services:
       --save 60 1000
       --protected-mode yes
       --tcp-keepalive 300
-      --tcp-backlog 511'
+      --tcp-backlog 511
+      '
     networks:
       conexao-network-swarm:
         aliases:

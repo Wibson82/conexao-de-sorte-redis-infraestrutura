@@ -304,10 +304,12 @@ jobs:
             fi
 
             if [[ $i -eq 12 ]]; then
-              echo "⚠️ Timeout aguardando serviços - verificando status final..."
+              echo "❌ FALHA: Timeout aguardando serviços - Redis não conseguiu inicializar!"
               docker stack services "$STACK_NAME"
               echo "🔍 Logs do serviço para diagnóstico:"
               docker service logs conexao-redis_redis --tail 20 || echo "❌ Erro ao obter logs"
+              echo "❌ Deploy falhou - Redis não está funcionando"
+              exit 1
             fi
 
             sleep 15
