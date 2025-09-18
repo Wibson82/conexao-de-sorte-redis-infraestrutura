@@ -48,7 +48,7 @@ log_info "🧹 Iniciando limpeza de Docker Secrets do projeto Conexão de Sorte"
 # DEFINIR SECRETS A SEREM REMOVIDOS
 # ================================================================================
 
-# Lista de todos os secrets relacionados ao projeto
+# Lista de secrets relacionados ao Redis Infrastructure
 PROJECT_SECRETS=(
     # Redis Infrastructure
     "REDIS_PASSWORD"
@@ -56,23 +56,9 @@ PROJECT_SECRETS=(
     "REDIS_PORT"
     "REDIS_DATABASE"
 
-    # MySQL/Database Infrastructure
-    "DATABASE_HOST"
-    "DATABASE_PORT"
-    "DATABASE_USERNAME"
-    "DATABASE_PASSWORD"
-    "DATABASE_PROXYSQL_PASSWORD"
-    "DATABASE_JDBC_URL"
-    "DATABASE_R2DBC_URL"
-    "DATABASE_URL"
-    "DB_HOST"
-    "DB_PORT"
-    "DB_USERNAME"
-    "DB_PASSWORD"
-
-    # Legacy secrets (se existirem)
-    "MYSQL_ROOT_PASSWORD"
-    "MYSQL_REPLICATION_PASSWORD"
+    # Legacy Redis secrets (se existirem)
+    "REDIS_ROOT_PASSWORD"
+    "CONEXAO_REDIS_PASSWORD"
     "PROXYSQL_PASSWORD"
 )
 

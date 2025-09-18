@@ -47,35 +47,17 @@ log_info "🔍 Iniciando validação de Docker Secrets"
 # DEFINIR SECRETS NECESSÁRIOS
 # ================================================================================
 
-# Secrets essenciais (obrigatórios para funcionamento básico)
+# Secrets essenciais (obrigatórios para funcionamento básico do Redis)
 ESSENTIAL_SECRETS=(
     "REDIS_PASSWORD"
-    "DATABASE_PASSWORD"
-    "DATABASE_USERNAME"
 )
 
-# Secrets completos do Redis
+# Secrets completos do Redis Infrastructure
 REDIS_SECRETS=(
     "REDIS_PASSWORD"
     "REDIS_HOST"
     "REDIS_PORT"
     "REDIS_DATABASE"
-)
-
-# Secrets completos do Database
-DATABASE_SECRETS=(
-    "DATABASE_HOST"
-    "DATABASE_PORT"
-    "DATABASE_USERNAME"
-    "DATABASE_PASSWORD"
-    "DATABASE_PROXYSQL_PASSWORD"
-    "DATABASE_JDBC_URL"
-    "DATABASE_R2DBC_URL"
-    "DATABASE_URL"
-    "DB_HOST"
-    "DB_PORT"
-    "DB_USERNAME"
-    "DB_PASSWORD"
 )
 
 # ================================================================================
@@ -151,7 +133,6 @@ log_info "🚀 Iniciando validação de secrets..."
 # Variáveis para controle de validação
 essential_valid=true
 redis_valid=true
-database_valid=true
 
 # Validar secrets essenciais
 log_info "🔑 Validando secrets essenciais..."
@@ -173,10 +154,6 @@ fi
 # Validar grupos de secrets
 if ! validate_secret_group REDIS_SECRETS "Redis Infrastructure"; then
     redis_valid=false
-fi
-
-if ! validate_secret_group DATABASE_SECRETS "MySQL/Database"; then
-    database_valid=false
 fi
 
 # ================================================================================
@@ -218,9 +195,9 @@ fi
 log_info "📊 Coletando estatísticas..."
 
 # Contar todos os secrets do projeto
+# Combinar todos os secrets para relatório
 all_project_secrets=()
 all_project_secrets+=("${REDIS_SECRETS[@]}")
-all_project_secrets+=("${DATABASE_SECRETS[@]}")
 
 # Remover duplicatas
 IFS=" " read -r -a unique_secrets <<< "$(printf '%s\n' "${all_project_secrets[@]}" | sort -u | tr '\n' ' ')"
@@ -262,24 +239,18 @@ else
     echo "  🔴 Redis: ❌ FALHA"
 fi
 
-if [[ $database_valid == true ]]; then
-    echo "  🗄️  Database: ✅ OK"
-else
-    echo "  🗄️  Database: ❌ FALHA"
-fi
-
 echo ""
 
 # Determinar status final
 if [[ $essential_valid == true ]]; then
-    if [[ $redis_valid == true && $database_valid == true ]]; then
-        log_success "🎉 Validação concluída: TODOS OS SECRETS VÁLIDOS!"
+    if [[ $redis_valid == true ]]; then
+        log_success "🎉 Validação concluída: TODOS OS SECRETS DO REDIS VÁLIDOS!"
         exit 0
     else
         log_warning "⚠️ Validação concluída: SECRETS ESSENCIAIS OK, mas alguns opcionais faltando"
         exit 0
     fi
 else
-    log_error "💥 Validação falhou: SECRETS ESSENCIAIS FALTANDO!"
+    log_error "💥 Validação falhou: SECRETS ESSENCIAIS DO REDIS FALTANDO!"
     exit 1
 fi

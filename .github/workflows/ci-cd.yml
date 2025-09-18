@@ -191,42 +191,49 @@ jobs:
         run: |
           echo "🔐 Criando Docker Secrets para Redis..."
 
-          # Remover secrets antigos para garantir uso dos novos valores do Azure Key Vault
+          # Usar nome único baseado no run para evitar conflitos de cache do Docker Swarm
+          SECRET_NAME="conexao-de-sorte-redis-password-${{ github.run_number }}"
+          echo "🔑 Usando secret único: $SECRET_NAME"
+
+          # Remover secrets antigos (todos os possíveis nomes)
           echo "🗑️ Removendo secrets Redis antigos..."
-          docker secret rm conexao-de-sorte-redis-password 2>/dev/null || echo "ℹ️ Secret não existia"
+          docker secret ls --format "{{.Name}}" | grep "conexao-de-sorte-redis-password" | xargs -r docker secret rm || echo "ℹ️ Nenhum secret antigo encontrado"
 
-          # Aguardar Docker Swarm processar remoção antes de recriar
+          # Aguardar Docker Swarm processar remoção
           echo "⏳ Aguardando Docker Swarm processar remoção..."
-          sleep 10
+          sleep 5
 
-          # Approach definitivo: usar set +e para ignorar exit codes
-          set +e
+          # Criar secret com nome único
+          echo "📝 Criando secret único $SECRET_NAME..."
+          echo "$REDIS_PASSWORD" | docker secret create "$SECRET_NAME" -
+          echo "✅ Secret $SECRET_NAME criado com sucesso"
 
-          echo "📝 Criando secret conexao-de-sorte-redis-password..."
-          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
-          if [ $? -eq 0 ]; then
-            echo "✅ Secret conexao-de-sorte-redis-password criado"
-          else
-            echo "ℹ️ Secret conexao-de-sorte-redis-password já existe - reutilizando"
-          fi
-
-          set -e
-
-          echo "✅ Docker Secrets verificados/criados com sucesso"
+          # Disponibilizar nome do secret para próximos steps
+          echo "REDIS_SECRET_NAME=$SECRET_NAME" >> $GITHUB_ENV
 
       - name: 🔍 Validate Docker Secrets
         run: |
-          echo "🔍 Validando Docker Secrets criados..."
+          echo "🔍 Validando Docker Secret criado..."
 
-          # Validar secret da senha
-          if docker secret ls | grep -q "conexao-de-sorte-redis-password"; then
-            echo "✅ Secret conexao-de-sorte-redis-password encontrado"
+          # Validar secret da senha com nome único
+          if docker secret ls --format "table {{.Name}}" | grep -q "$REDIS_SECRET_NAME"; then
+            echo "✅ Secret $REDIS_SECRET_NAME encontrado"
           else
-            echo "❌ Secret conexao-de-sorte-redis-password não encontrado"
+            echo "❌ Secret $REDIS_SECRET_NAME não encontrado"
             exit 1
           fi
 
-          echo "✅ Validação de secrets concluída"
+          echo "✅ Validação do secret concluída"
+
+      - name: 🔧 Update Docker Compose with Dynamic Secret
+        run: |
+          echo "🔧 Atualizando docker-compose.yml com secret dinâmico..."
+
+          # Criar docker-compose.yml atualizado com secret name dinâmico
+          sed "s/conexao-de-sorte-redis-password/$REDIS_SECRET_NAME/g" docker-compose.yml > docker-compose-runtime.yml
+
+          echo "✅ Docker compose atualizado: docker-compose-runtime.yml"
+          echo "📋 Secret usado: $REDIS_SECRET_NAME"
 
       - name: 🔧 Ensure Required Docker Resources
         timeout-minutes: 3
@@ -254,7 +261,7 @@ jobs:
       - name: 🚀 Deploy Redis Production Stack
         env:
           STACK_NAME: conexao-redis
-          COMPOSE_FILE: docker-compose.yml
+          COMPOSE_FILE: docker-compose-runtime.yml
         run: |
           echo "🚀 Iniciando deploy do Redis Stack para PRODUÇÃO..."
           echo "📦 Stack: $STACK_NAME"

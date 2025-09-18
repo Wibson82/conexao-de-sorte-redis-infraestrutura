@@ -56,28 +56,12 @@ log_info "🌍 Environment: $ENVIRONMENT"
 # DEFINIR MAPEAMENTO DE SECRETS
 # ================================================================================
 
-# Redis Infrastructure Secrets
+# Redis Infrastructure Secrets - Apenas os necessários para funcionamento do Redis
 declare -A REDIS_SECRETS=(
     ["conexao-de-sorte-redis-password"]="REDIS_PASSWORD"
     ["conexao-de-sorte-redis-host"]="REDIS_HOST"
     ["conexao-de-sorte-redis-port"]="REDIS_PORT"
     ["conexao-de-sorte-redis-database"]="REDIS_DATABASE"
-)
-
-# MySQL/Database Secrets
-declare -A DATABASE_SECRETS=(
-    ["conexao-de-sorte-database-host"]="DATABASE_HOST"
-    ["conexao-de-sorte-database-port"]="DATABASE_PORT"
-    ["conexao-de-sorte-database-username"]="DATABASE_USERNAME"
-    ["conexao-de-sorte-database-password"]="DATABASE_PASSWORD"
-    ["conexao-de-sorte-database-proxysql-password"]="DATABASE_PROXYSQL_PASSWORD"
-    ["conexao-de-sorte-database-jdbc-url"]="DATABASE_JDBC_URL"
-    ["conexao-de-sorte-database-r2dbc-url"]="DATABASE_R2DBC_URL"
-    ["conexao-de-sorte-database-url"]="DATABASE_URL"
-    ["conexao-de-sorte-db-host"]="DB_HOST"
-    ["conexao-de-sorte-db-port"]="DB_PORT"
-    ["conexao-de-sorte-db-username"]="DB_USERNAME"
-    ["conexao-de-sorte-db-password"]="DB_PASSWORD"
 )
 
 # ================================================================================
@@ -231,16 +215,10 @@ log_info "🚀 Iniciando processamento de secrets..."
 
 # Variáveis para controle de sucesso
 redis_success=false
-database_success=false
 
 # Processar Redis secrets
 if process_secret_group REDIS_SECRETS "Redis Infrastructure"; then
     redis_success=true
-fi
-
-# Processar Database secrets
-if process_secret_group DATABASE_SECRETS "MySQL/Database"; then
-    database_success=true
 fi
 
 # ================================================================================
@@ -251,10 +229,10 @@ log_info "🔍 Validando secrets criados..."
 
 # Listar todos os secrets criados
 log_info "📋 Secrets Docker criados:"
-docker secret ls --format "table {{.Name}}\t{{.CreatedAt}}" | grep -E "(REDIS_|DATABASE_|DB_)" || true
+docker secret ls --format "table {{.Name}}\t{{.CreatedAt}}" | grep -E "REDIS_" || true
 
 # Verificar se pelo menos os secrets essenciais foram criados
-essential_secrets=("REDIS_PASSWORD" "DATABASE_PASSWORD")
+essential_secrets=("REDIS_PASSWORD")
 missing_essential=()
 
 for secret in "${essential_secrets[@]}"; do
@@ -280,16 +258,10 @@ else
     log_error "❌ Redis Infrastructure secrets: FALHA"
 fi
 
-if [[ $database_success == true ]]; then
-    log_success "✅ MySQL/Database secrets: OK"
-else
-    log_error "❌ MySQL/Database secrets: FALHA"
-fi
-
 if [[ ${#missing_essential[@]} -eq 0 ]]; then
     log_success "✅ Todos os secrets essenciais foram criados"
     echo ""
-    log_success "🎉 Sincronização concluída com sucesso!"
+    log_success "🎉 Sincronização do Redis concluída com sucesso!"
     exit 0
 else
     log_error "❌ Secrets essenciais não criados: ${missing_essential[*]}"
