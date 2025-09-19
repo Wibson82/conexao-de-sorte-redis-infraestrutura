@@ -25,7 +25,11 @@ services:
     hostname: conexao-redis
     command: >
       sh -c '
-      REDIS_PASS="$$(cat /run/secrets/conexao-de-sorte-redis-password 2>/dev/null || echo "defaultpass")";
+      REDIS_PASS="$$(cat /run/secrets/conexao-de-sorte-redis-password)";
+      if [ -z "$$REDIS_PASS" ]; then
+        echo "FATAL: Redis password secret not available - refusing to start with insecure defaults";
+        exit 1;
+      fi;
       redis-server
       --requirepass "$$REDIS_PASS"
       --appendonly yes

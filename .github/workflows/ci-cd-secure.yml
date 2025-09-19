@@ -1,0 +1,331 @@
+name: 🔴 Redis Infrastructure - CI/CD Pipeline (SECURE)
+
+on:
+  push:
+    branches: [ main ]
+    paths: ['docker-compose.yml', 'scripts/**', '.github/workflows/**', 'README.md']
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Destino do deploy'
+        required: false
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+# 🔒 CONFIGURAÇÃO SEGURA - BASEADA EM ZOOKEEPER SUCCESS TEMPLATE
+# ================================================================================
+env:
+  SERVICE_NAME: conexao-de-sorte-redis-infraestrutura
+  TZ: America/Sao_Paulo
+
+# 🔒 PERMISSÕES MÍNIMAS PARA OIDC
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # 🔍 VALIDAÇÃO E BUILD SEGURO
+  validate-and-build:
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4.3.0
+
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 📋 Confirmar consumo mínimo do Key Vault
+        run: |
+          echo 'Job de validação não consome segredos do Key Vault (apenas validação).'
+
+      - name: 🔍 Validate Docker Compose
+        run: |
+          set -euo pipefail
+          if [[ ! -f docker-compose.yml ]]; then
+            echo "❌ docker-compose.yml não encontrado"
+            exit 1
+          fi
+
+          # Validação básica YAML
+          docker-compose config >/dev/null
+          echo "✅ Docker Compose syntax válida"
+
+      - name: 🔒 Security Validation
+        run: |
+          set -euo pipefail
+
+          # Verificar se não há hardcoded passwords
+          if grep -rE "(password|pass).*[:=][[:space:]]*['\"][^$\{]" docker-compose.yml | grep -v "secrets:" | grep -v "external:"; then
+            echo "❌ Found hardcoded passwords in compose files"
+            exit 1
+          fi
+
+          # Verificar fallbacks inseguros
+          if grep -q "defaultpass\|default.*pass" docker-compose.yml; then
+            echo "❌ Insecure password fallbacks detected"
+            exit 1
+          fi
+
+          # Verificar se imagens usam tags específicas
+          if grep -q ":latest" docker-compose.yml; then
+            echo "❌ Uso de tags 'latest' detectado"
+            exit 1
+          fi
+
+          echo "✅ Validações de segurança passaram"
+
+  # 🚀 DEPLOY SEGURO EM PRODUÇÃO
+  deploy-production:
+    needs: validate-and-build
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DOCKER_NETWORK_NAME: conexao-network-swarm
+      STACK_NAME: conexao-redis
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4.3.0
+
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Key Vault secrets (Redis)
+        id: kv
+        uses: azure/get-keyvault-secrets@v1
+        with:
+          keyvault: ${{ secrets.AZURE_KEYVAULT_NAME }}
+          secrets: |
+            conexao-de-sorte-redis-password
+
+      - name: Export and validate Redis password
+        run: |
+          set -euo pipefail
+          secret="${{ steps.kv.outputs.conexao-de-sorte-redis-password }}"
+
+          # 🛡️ FAIL-FAST: Se não conseguir buscar secret, falhar deploy
+          if [[ -z "$secret" ]]; then
+            echo "❌ CRITICAL: conexao-de-sorte-redis-password não encontrado no Key Vault"
+            echo "❌ Deploy abortado para evitar uso de senhas inseguras"
+            exit 1
+          fi
+
+          # Masking obrigatório
+          echo "::add-mask::$secret"
+
+          # Validação de força da senha
+          if [[ ${#secret} -lt 8 ]]; then
+            echo "❌ ERRO: Redis password muito simples (mínimo 8 caracteres)"
+            exit 1
+          fi
+
+          # Export seguro para Docker
+          printf 'REDIS_PASSWORD=%s\n' "$secret" >> "$GITHUB_ENV"
+          echo "✅ Redis password validado e configurado"
+
+      - name: 🐳 Create Docker Secrets
+        run: |
+          set -euo pipefail
+
+          echo "🔑 Criando Docker Secret para Redis..."
+
+          SECRET_NAME="conexao-de-sorte-redis-password"
+
+          # Remover secret existente se houver
+          if docker secret ls --format "{{.Name}}" | grep -q "^${SECRET_NAME}$"; then
+            echo "🔄 Removendo secret existente..."
+            docker secret rm "$SECRET_NAME" || true
+            sleep 2
+          fi
+
+          # Criar secret com senha do Key Vault
+          echo "📝 Criando secret: $SECRET_NAME"
+          echo "$REDIS_PASSWORD" | docker secret create "$SECRET_NAME" -
+          echo "✅ Secret criado com sucesso"
+
+      - name: 🔧 Ensure Docker Resources
+        run: |
+          set -euo pipefail
+
+          echo "🔧 Verificando recursos Docker..."
+
+          # Verificar volume Redis
+          if ! docker volume ls | grep -q "redis_data"; then
+            echo "📁 Criando volume: redis_data"
+            docker volume create redis_data
+          else
+            echo "✅ Volume redis_data existe"
+          fi
+
+          # Verificar rede Swarm
+          if ! docker network ls | grep -q "conexao-network-swarm"; then
+            echo "🌐 Criando rede: conexao-network-swarm"
+            docker network create --driver overlay conexao-network-swarm
+          else
+            echo "✅ Rede conexao-network-swarm existe"
+          fi
+
+      - name: 🧹 Cleanup and Deploy
+        run: |
+          set -euo pipefail
+
+          echo "🧹 Preparando deploy limpo..."
+
+          STACK_NAME="conexao-redis"
+
+          # Remover stack existente
+          if docker stack ls | grep -q "$STACK_NAME"; then
+            echo "🗑️ Removendo stack existente: $STACK_NAME"
+            docker stack rm "$STACK_NAME"
+
+            # Aguardar remoção
+            timeout=60
+            elapsed=0
+            while docker stack ls | grep -q "$STACK_NAME" && [ $elapsed -lt $timeout ]; do
+              sleep 3
+              elapsed=$((elapsed + 3))
+              echo "⏳ Aguardando remoção... ($elapsed/$timeout segundos)"
+            done
+          fi
+
+          # Limpar containers órfãos
+          ORPHAN_CONTAINERS=$(docker ps -a --filter "name=redis" -q || true)
+          if [[ -n "$ORPHAN_CONTAINERS" ]]; then
+            echo "🧹 Removendo containers órfãos Redis..."
+            docker rm -f $ORPHAN_CONTAINERS || true
+          fi
+
+      - name: 🚀 Deploy Redis Infrastructure
+        run: |
+          set -euo pipefail
+
+          echo "🚀 Iniciando deploy Redis..."
+
+          STACK_NAME="conexao-redis"
+
+          # Deploy da stack
+          docker stack deploy -c docker-compose.yml $STACK_NAME
+
+          echo "⏳ Aguardando serviços ficarem prontos..."
+          sleep 20
+
+          # Verificar status com retry
+          for i in {1..12}; do
+            RUNNING=$(docker service ls --filter name="${STACK_NAME}_redis" --format "{{.Replicas}}" | grep -o '^[0-9]*' | head -1 || echo "0")
+            TOTAL=$(docker service ls --filter name="${STACK_NAME}_redis" --format "{{.Replicas}}" | grep -o '/[0-9]*' | sed 's/\///' | head -1 || echo "0")
+
+            if [[ $RUNNING -eq $TOTAL && $TOTAL -gt 0 ]]; then
+              echo "✅ Redis service pronto: $RUNNING/$TOTAL"
+              break
+            fi
+
+            if [[ $i -eq 12 ]]; then
+              echo "⚠️ Timeout aguardando Redis - verificando status..."
+              docker service ls --filter name="${STACK_NAME}_redis"
+              break
+            fi
+
+            echo "⏳ Aguardando Redis... ($RUNNING/$TOTAL) - tentativa $i/12"
+            sleep 10
+          done
+
+      - name: 🩺 Redis Health Check
+        run: |
+          set -euo pipefail
+
+          echo "🩺 Validando saúde do Redis..."
+
+          # Aguardar inicialização completa
+          sleep 15
+
+          REDIS_CONTAINER=$(docker ps --filter "name=redis" --format "{{.ID}}" | head -1 || true)
+
+          if [[ -n "$REDIS_CONTAINER" ]]; then
+            echo "✅ Container Redis encontrado: $REDIS_CONTAINER"
+
+            # Teste 1: Verificar processo Redis
+            if docker exec "$REDIS_CONTAINER" ps aux | grep -q "[r]edis-server"; then
+              echo "✅ Processo Redis rodando"
+            else
+              echo "❌ Processo Redis não encontrado"
+              exit 1
+            fi
+
+            # Teste 2: Verificar porta 6379
+            if docker exec "$REDIS_CONTAINER" netstat -tlnp 2>/dev/null | grep -q ":6379"; then
+              echo "✅ Porta 6379 listening"
+            else
+              echo "❌ Porta 6379 não disponível"
+              exit 1
+            fi
+
+            # Teste 3: Ping com autenticação
+            echo "🔍 Testando conectividade Redis com auth..."
+            if docker exec "$REDIS_CONTAINER" redis-cli --no-auth-warning -a "$REDIS_PASSWORD" ping | grep -q "PONG"; then
+              echo "✅ Redis respondendo a ping com autenticação"
+            else
+              echo "❌ Redis não responde a ping autenticado"
+              exit 1
+            fi
+
+            echo "🎉 Redis health check completo!"
+
+          else
+            echo "❌ Container Redis não encontrado"
+            exit 1
+          fi
+
+      - name: 📊 Final Status Report
+        if: always()
+        run: |
+          set -euo pipefail
+
+          echo "📊 RELATÓRIO FINAL REDIS DEPLOY"
+          echo "==============================="
+
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Status: SUCESSO"
+            echo "🎉 Redis Infrastructure deploy seguro concluído!"
+            echo ""
+            echo "🔗 Commit: ${{ github.sha }}"
+            echo "👤 Autor: ${{ github.actor }}"
+            echo "🌿 Branch: ${{ github.ref_name }}"
+            echo ""
+            echo "🔒 Segurança: Sem fallbacks inseguros"
+            echo "🔑 Autenticação: Key Vault integrado"
+            echo "✅ Health checks: Todos passaram"
+          else
+            echo "❌ Status: FALHA"
+            echo "🚨 Deploy falhou - verificar logs acima"
+            echo ""
+            echo "🔧 Para debug:"
+            echo "  1. Verificar logs: docker service logs conexao-redis_redis"
+            echo "  2. Verificar status: docker stack services conexao-redis"
+            echo "  3. Verificar secrets: docker secret ls"
+          fi
