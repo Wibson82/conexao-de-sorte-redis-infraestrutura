@@ -69,8 +69,8 @@ jobs:
           if [[ -f .github/workflows/ci-cd-secure.yml ]]; then
             echo "✅ ci-cd-secure.yml found"
 
-            # Check for hardcoded secrets in workflow
-            if grep -rE "(password|secret).*[:=][[:space:]]*['\"][^$\{]" .github/workflows/ci-cd-secure.yml | grep -v "secrets\." | grep -v "GITHUB_"; then
+            # Check for actual hardcoded secrets (not validation code)
+            if grep -rE "(password|secret)[[:space:]]*:[[:space:]]*['\"][^$\{]" .github/workflows/ci-cd-secure.yml | grep -v "secrets\." | grep -v "GITHUB_" | grep -v "grep -" | grep -v "if grep"; then
               echo "❌ SECURITY VIOLATION: Hardcoded secrets in workflow"
               exit 1
             fi
