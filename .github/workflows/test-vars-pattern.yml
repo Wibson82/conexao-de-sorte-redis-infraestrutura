@@ -1,0 +1,49 @@
+name: 🧪 Test vars.AZURE_* Pattern
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test-vars-pattern:
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 5
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4.3.0
+
+      - name: 🔍 Test vars.AZURE_* pattern
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME }}
+        run: |
+          echo "🧪 Testing vars.AZURE_* pattern..."
+          echo "CLIENT_ID length: ${#AZURE_CLIENT_ID}"
+          echo "TENANT_ID length: ${#AZURE_TENANT_ID}"
+          echo "SUBSCRIPTION_ID length: ${#AZURE_SUBSCRIPTION_ID}"
+          echo "KEYVAULT_NAME length: ${#AZURE_KEYVAULT_NAME}"
+
+          if [[ -z "$AZURE_CLIENT_ID" ]]; then
+            echo "❌ vars.AZURE_CLIENT_ID is empty"
+            exit 1
+          fi
+
+          echo "✅ vars.AZURE_* pattern test successful"
+
+      - name: 🔐 Test Azure Login with vars
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ✅ Azure connectivity test
+        run: |
+          echo "🔗 Testing Azure connectivity..."
+          az account show --output table
+          echo "✅ vars.AZURE_* pattern works!"
