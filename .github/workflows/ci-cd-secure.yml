@@ -37,7 +37,7 @@ defaults:
 jobs:
   # 🔍 VALIDAÇÃO E BUILD SEGURO
   validate-and-build:
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [srv649924, self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 15
     permissions:
       contents: read
@@ -96,7 +96,7 @@ jobs:
   # 🚀 DEPLOY SEGURO EM PRODUÇÃO
   deploy-production:
     needs: validate-and-build
-    runs-on: [self-hosted, Linux, X64, srv649924, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [srv649924, self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 20
     if: github.ref == 'refs/heads/main'
     permissions:
