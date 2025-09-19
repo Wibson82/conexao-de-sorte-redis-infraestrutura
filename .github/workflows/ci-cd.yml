@@ -64,7 +64,7 @@ defaults:
 jobs:
   # 🔒 VALIDAÇÃO DE CONTEXTO DE SEGURANÇA
   security-context-validation:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 2
     outputs:
       security-validated: ${{ steps.security-check.outputs.validated }}
@@ -107,7 +107,7 @@ jobs:
 
   validate-and-build:
     needs: security-context-validation
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, srv649924, conexao, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4.3.0
