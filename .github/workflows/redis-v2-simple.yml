@@ -1,4 +1,4 @@
-name: "🔴 Redis Infrastructure – CI/CD Pipeline (SIMPLE SUCCESS PATTERN)"
+name: "🚀 Redis Infrastructure – CI/CD Pipeline"
 
 on:
   push:
@@ -9,6 +9,8 @@ on:
 
 env:
   SERVICE_NAME: redis-infrastructure
+  STACK_NAME: conexao-redis
+  DOCKER_NETWORK_NAME: conexao-network-swarm
 
 permissions:
   contents: read
@@ -20,7 +22,7 @@ concurrency:
 
 jobs:
   validate-and-build:
-    runs-on: [ self-hosted, Linux, X64, conexao, conexao-de-sorte-zookeeper-infraestrutura ]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
@@ -29,7 +31,15 @@ jobs:
       has_keyvault: ${{ steps.check_secrets.outputs.has_keyvault }}
       has_azure_creds: ${{ steps.check_secrets.outputs.has_azure_creds }}
     steps:
-      - uses: actions/checkout@v4.3.0
+      - name: Checkout
+        uses: actions/checkout@v4.3.0
+        with:
+          fetch-depth: 1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-yaml jq
 
       - name: 🔎 Validar identificadores Azure (vars)
         id: check_secrets
@@ -65,29 +75,6 @@ jobs:
           else
             echo '✅ Endpoint customizado definido'
           fi
-
-      - name: Ensure Python deps
-        run: |
-          set -Eeuo pipefail
-          if ! command -v python3 >/dev/null 2>&1; then
-            echo '❌ python3 não está disponível no runner self-hosted.' >&2
-            exit 1
-          fi
-          python3 -c "import importlib.util, subprocess, sys; import importlib; spec = importlib.util.find_spec('yaml'); subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'PyYAML']) if spec is None else None"
-          echo "✅ Dependências Python disponíveis"
-
-      - name: 🔐 Azure Login (OIDC)
-        if: ${{ steps.check_secrets.outputs.has_azure_creds == 'true' }}
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: 📋 Confirmar consumo mínimo do Key Vault
-        if: ${{ steps.check_secrets.outputs.has_keyvault == 'true' }}
-        run: |
-          echo 'Job de validação não consome segredos do Key Vault (lista vazia).'
 
       - name: Validate Docker Compose
         run: |
@@ -129,18 +116,15 @@ jobs:
 
   deploy-selfhosted:
     needs: validate-and-build
-    runs-on: [ self-hosted, Linux, X64, conexao, conexao-de-sorte-zookeeper-infraestrutura ]
+    runs-on: [ self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura ]
     timeout-minutes: 15
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       id-token: write
-    env:
-      DOCKER_NETWORK_NAME: conexao-network-swarm
-      STACK_NAME: conexao-redis
-      COMPOSE_FILE: docker-compose.yml
     steps:
-      - uses: actions/checkout@v4.3.0
+      - name: Checkout
+        uses: actions/checkout@v4.3.0
         with:
           clean: true
           fetch-depth: 1
@@ -151,20 +135,69 @@ jobs:
           name: redis-configs
           path: .
 
-      - name: Get Key Vault secrets (Redis)
+      - name: 🔍 Diagnósticos iniciais
+        run: |
+          echo "🔍 Verificando arquivos necessários..."
+          for required_file in "docker-compose.yml"; do
+            if [[ -f "$required_file" ]]; then
+              echo "✅ $required_file encontrado"
+            else
+              echo "❌ $required_file NÃO encontrado"
+              exit 1
+            fi
+          done
+
+          echo "🔍 Validando diretórios críticos..."
+          required_dirs=()
+          if (( ${#required_dirs[@]} )); then
+            for required_dir in "${required_dirs[@]}"; do
+              if [[ -d "$required_dir" ]]; then
+                echo "✅ Diretório $required_dir existe"
+              else
+                echo "⚠️ Diretório $required_dir não existe - criando..."
+                mkdir -p "$required_dir"
+              fi
+            done
+          else
+            echo "ℹ️ Nenhum diretório local obrigatório para Redis"
+          fi
+
+      - name: 🔐 Azure Login (OIDC)
+        if: ${{ needs.validate-and-build.outputs.has_azure_creds == 'true' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🔐 Get secrets from Azure Key Vault (OIDC)
         id: kv
         if: ${{ needs.validate-and-build.outputs.has_keyvault == 'true' }}
-        uses: azure/get-keyvault-secrets@v1
+        uses: azure/CLI@v1
         with:
-          keyvault: ${{ secrets.AZURE_KEYVAULT_NAME }}
-          secrets: |
-            conexao-de-sorte-redis-password
+          azcliversion: 2.76.0
+          inlineScript: |
+            set -Eeuo pipefail
+            echo "🔐 Buscando secrets do Redis no Key Vault..."
+            password=$(az keyvault secret show \
+              --vault-name "${{ secrets.AZURE_KEYVAULT_NAME }}" \
+              --name "conexao-de-sorte-redis-password" \
+              --query value -o tsv)
+
+            if [[ -z "$password" ]]; then
+              echo '❌ Secret conexao-de-sorte-redis-password não encontrado no Key Vault' >&2
+              exit 1
+            fi
+
+            echo "::add-mask::$password"
+            echo "redis_password=$password" >> "$GITHUB_OUTPUT"
+            echo "✅ Secret do Redis obtido com sucesso"
 
       - name: Preparar secrets do Redis
         if: ${{ needs.validate-and-build.outputs.has_keyvault == 'true' }}
         run: |
           set -Eeuo pipefail
-          password="${{ steps.kv.outputs.conexao-de-sorte-redis-password }}"
+          password="${{ steps.kv.outputs.redis_password }}"
           if [[ -z "$password" ]]; then
             echo '❌ Segredos do Redis não retornados pelo Key Vault'
             exit 1
@@ -172,10 +205,10 @@ jobs:
           echo '✅ Segredos do Redis obtidos do Key Vault'
 
       - name: 🔴 Deploy Redis Stack (Swarm-Only)
-        env:
-          STACK_NAME: conexao-redis
-          COMPOSE_FILE: docker-compose.yml
         run: |
+          set -Eeuo pipefail
+          compose_file="docker-compose.yml"
+
           echo "🚀 Iniciando deploy do Redis com Docker Swarm..."
 
           # Remover stack existente se houver
@@ -187,14 +220,12 @@ jobs:
 
           # Deploy da nova stack
           echo "🏗️ Executando deploy da stack '$STACK_NAME'..."
-          docker stack deploy -c "$COMPOSE_FILE" "$STACK_NAME"
+          docker stack deploy -c "$compose_file" "$STACK_NAME"
 
           echo "⏰ Aguardando estabilização dos serviços Redis..."
           sleep 35
 
       - name: Healthcheck Redis (Multi-método)
-        env:
-          STACK_NAME: conexao-redis
         run: |
           echo "🔍 Validando saúde do Redis com health checks robustos..."
 
@@ -255,8 +286,6 @@ jobs:
           fi
 
       - name: Connectivity Validation
-        env:
-          STACK_NAME: conexao-redis
         run: |
           echo "🔍 Validando conectividade do Redis..."
 
@@ -269,7 +298,7 @@ jobs:
           fi
 
           # Verificar se está na rede correta
-          if docker network inspect conexao-network-swarm | grep -q redis; then
+          if docker network inspect "$DOCKER_NETWORK_NAME" | grep -q redis; then
             echo "✅ Redis conectado à rede overlay"
           else
             echo "⚠️ Redis pode não estar na rede overlay correta"
@@ -288,3 +317,5 @@ jobs:
 
           echo "📊 Status final dos serviços:"
           docker service ls --filter name="${STACK_NAME}_*" --format "table {{.Name}}\t{{.Replicas}}\t{{.Image}}"
+          echo "🔍 Status detalhado do serviço Redis:"
+          docker service ps "${STACK_NAME}_redis" --no-trunc || true
