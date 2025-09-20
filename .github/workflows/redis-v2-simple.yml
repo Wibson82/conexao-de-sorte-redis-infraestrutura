@@ -107,13 +107,6 @@ jobs:
             echo "✅ No ports exposed - maximum security (overlay network only)"
           fi
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4.5.0
-        with:
-          name: redis-configs
-          path: |
-            docker-compose.yml
-
   deploy-selfhosted:
     needs: validate-and-build
     runs-on: [ self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura ]
@@ -128,12 +121,6 @@ jobs:
         with:
           clean: true
           fetch-depth: 1
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4.1.8
-        with:
-          name: redis-configs
-          path: .
 
       - name: 🔍 Diagnósticos iniciais
         run: |
