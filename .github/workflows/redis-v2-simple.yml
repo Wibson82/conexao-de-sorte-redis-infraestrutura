@@ -195,6 +195,24 @@ jobs:
 
           echo "🚀 Iniciando deploy do Redis com Docker Swarm..."
 
+          echo "🔍 Garantindo recursos básicos (rede, volume, secret)..."
+          if ! docker network ls --format '{{.Name}}' | grep -Fxq "$DOCKER_NETWORK_NAME"; then
+            echo "⚠️ Rede '$DOCKER_NETWORK_NAME' não encontrada - criando overlay attachable"
+            docker network create --driver overlay --attachable "$DOCKER_NETWORK_NAME"
+            echo "✅ Rede '$DOCKER_NETWORK_NAME' criada"
+          else
+            echo "✅ Rede '$DOCKER_NETWORK_NAME' já existe"
+          fi
+
+          volume_name="redis_data"
+          if ! docker volume ls --format '{{.Name}}' | grep -Fxq "$volume_name"; then
+            echo "⚠️ Volume '$volume_name' não encontrado - criando volume externo"
+            docker volume create --name "$volume_name"
+            echo "✅ Volume '$volume_name' criado"
+          else
+            echo "✅ Volume '$volume_name' já existe"
+          fi
+
           # Remover stack existente se houver
           if docker stack ls | grep -q "$STACK_NAME"; then
             echo "🔄 Removendo stack existente '$STACK_NAME'..."
