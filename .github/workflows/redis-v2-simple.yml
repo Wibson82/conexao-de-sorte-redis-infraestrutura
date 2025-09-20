@@ -109,7 +109,7 @@ jobs:
 
   deploy-selfhosted:
     needs: validate-and-build
-    runs-on: [ self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura, srv649924 ]
+    runs-on: [ self-hosted, Linux, X64, conexao, conexao-de-sorte-redis-infraestrutura ]
     timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
     permissions:
