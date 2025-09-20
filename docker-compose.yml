@@ -21,7 +21,7 @@ services:
   # 🔴 REDIS CACHE - Cache Distribuído
   # ============================================================================
   redis:
-    image: redis:7.4.2-alpine
+    image: redis:8.2.1-alpine
     hostname: conexao-redis
     command: >
       sh -c '
