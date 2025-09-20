@@ -180,21 +180,18 @@ jobs:
             echo "redis_password=$password" >> "$GITHUB_OUTPUT"
             echo "✅ Secret do Redis obtido com sucesso"
 
-      - name: Preparar secrets do Redis
-        if: ${{ needs.validate-and-build.outputs.has_keyvault == 'true' }}
-        run: |
-          set -Eeuo pipefail
-          password="${{ steps.kv.outputs.redis_password }}"
-          if [[ -z "$password" ]]; then
-            echo '❌ Segredos do Redis não retornados pelo Key Vault'
-            exit 1
-          fi
-          echo '✅ Segredos do Redis obtidos do Key Vault'
-
       - name: 🔴 Deploy Redis Stack (Swarm-Only)
+        env:
+          STACK_NAME: conexao-redis
+          DOCKER_NETWORK_NAME: conexao-network-swarm
+          HAS_KEYVAULT: ${{ needs.validate-and-build.outputs.has_keyvault }}
+          REDIS_PASSWORD: ${{ steps.kv.outputs.redis_password }}
         run: |
           set -Eeuo pipefail
           compose_file="docker-compose.yml"
+          secret_name="conexao-de-sorte-redis-password"
+          has_keyvault="${HAS_KEYVAULT:-false}"
+          password="${REDIS_PASSWORD:-}"
 
           echo "🚀 Iniciando deploy do Redis com Docker Swarm..."
 
@@ -202,7 +199,53 @@ jobs:
           if docker stack ls | grep -q "$STACK_NAME"; then
             echo "🔄 Removendo stack existente '$STACK_NAME'..."
             docker stack rm "$STACK_NAME"
-            sleep 10
+            echo "⏳ Aguardando remoção completa da stack '$STACK_NAME'..."
+            for _ in $(seq 1 36); do
+              if ! docker stack ls | grep -q "$STACK_NAME"; then
+                echo "✅ Stack '$STACK_NAME' removida"
+                break
+              fi
+              sleep 5
+            done
+            if docker stack ls | grep -q "$STACK_NAME"; then
+              echo "⚠️ Stack '$STACK_NAME' ainda está em processo de remoção"
+            fi
+          fi
+
+          if [[ "$has_keyvault" == "true" ]]; then
+            if [[ -z "$password" ]]; then
+              echo "❌ Segredo do Redis não recebido do Key Vault"
+              exit 1
+            fi
+
+            tmp_file=$(mktemp)
+            cleanup() { rm -f "$tmp_file"; }
+            trap cleanup EXIT
+            printf '%s' "$password" > "$tmp_file"
+
+            if docker secret ls --format '{{.Name}}' | grep -Fxq "$secret_name"; then
+              echo "♻️ Atualizando secret '$secret_name'"
+              docker secret rm "$secret_name"
+              # aguardar remoção para evitar conflitos
+              for _ in $(seq 1 12); do
+                if ! docker secret ls --format '{{.Name}}' | grep -Fxq "$secret_name"; then
+                  break
+                fi
+                sleep 2
+              done
+            else
+              echo "🆕 Criando secret '$secret_name'"
+            fi
+
+            docker secret create "$secret_name" "$tmp_file"
+            echo "✅ Secret '$secret_name' disponível no Swarm"
+          else
+            if docker secret ls --format '{{.Name}}' | grep -Fxq "$secret_name"; then
+              echo "ℹ️ Utilizando secret existente '$secret_name'"
+            else
+              echo "❌ Secret '$secret_name' não encontrado no Swarm e Key Vault desabilitado"
+              exit 1
+            fi
           fi
 
           # Deploy da nova stack
@@ -250,6 +293,8 @@ jobs:
 
               echo "⏳ Redis ainda não está pronto... ($elapsed/$timeout segundos)"
             else
+              echo "ℹ️ Status atual das tarefas Redis"
+              docker service ps "${STACK_NAME}_redis" --no-trunc || true
               echo "⏳ Container Redis ainda não encontrado... ($elapsed/$timeout segundos)"
             fi
 
