@@ -1,4 +1,4 @@
-name: "🚀 Redis Infrastructure – CI/CD Pipeline"
+name: "🚀 Redis Infrastructure - CI/CD Pipeline"
 
 on:
   push:
