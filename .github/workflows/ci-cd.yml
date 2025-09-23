@@ -1,4 +1,4 @@
-name: "🔴 Redis Infrastructure - CI/CD Pipeline"
+name: "🔴 Redis Infrastructure Deploy - Fixed"
 
 on:
   push:
@@ -136,7 +136,7 @@ jobs:
 
   deploy-selfhosted:
     needs: [validate-and-build]
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     timeout-minutes: 25
     if: github.ref == 'refs/heads/main' && always()
     permissions:
