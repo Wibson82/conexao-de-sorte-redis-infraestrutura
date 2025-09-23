@@ -1,4 +1,4 @@
-name: "🔴 Redis Infrastructure Deploy - Fixed"
+name: "Redis Infraestrutura"
 
 on:
   push:
