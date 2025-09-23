@@ -1,10 +1,16 @@
-name: "🔴 Redis Infrastructure - CI/CD Pipeline (Novo)"
+name: "🔴 Redis Infrastructure – CI/CD Pipeline"
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 env:
   SERVICE_NAME: redis-infrastructure
+  STACK_NAME: conexao-redis
+  DOCKER_NETWORK_NAME: conexao-network-swarm
 
 permissions:
   contents: read
@@ -34,23 +40,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3 python3-yaml jq
-
-      - name: Validate Docker Compose
-        run: |
-          docker compose -f docker-compose.yml config -q
-          echo "✅ Docker Compose syntax is valid"
-
-      - name: Security Validation - No Hardcoded Passwords
-        run: |
-          # Verificar se não há hardcoded passwords (excluindo secret names)
-          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "external:" | grep -v "secrets:" | grep -v "conexao-de-sorte-.*-password:"; then
-            echo "❌ Found potential hardcoded passwords"
-            exit 1
-          else
-            echo "✅ No hardcoded passwords found"
-          fi
-
-      - name: 🔎 Validar OIDC Azure
+      - name: 🔍 Validar identificadores Azure (vars)
         id: check_secrets
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -71,21 +61,46 @@ jobs:
             exit 1
           fi
           echo "✅ Identificadores Azure configurados via secrets"
-
-          # Key Vault é opcional
+          echo "has_azure_creds=true" >> "$GITHUB_OUTPUT"
+          # Key Vault opcional para Redis (infraestrutura simples)
           if [[ -n "${AZURE_KEYVAULT_NAME:-}" ]]; then
             echo "has_keyvault=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_keyvault=false" >> "$GITHUB_OUTPUT"
+            echo 'ℹ️ Key Vault não configurado (Redis não requer segredos complexos)'
           fi
-
           if [[ -z "${AZURE_KEYVAULT_ENDPOINT:-}" ]]; then
             echo 'ℹ️ AZURE_KEYVAULT_ENDPOINT não definido (usando endpoint padrão)'
           else
             echo '✅ Endpoint customizado definido'
           fi
-
-          echo "has_azure_creds=true" >> "$GITHUB_OUTPUT"
+      - name: Validate Docker Compose
+        run: |
+          # Validar sintaxe do docker-compose.yml
+          docker compose -f docker-compose.yml config -q
+          echo "✅ Docker Compose syntax is valid"
+      - name: Security Validation - No Hardcoded Passwords
+        run: |
+          # Verificar se não há hardcoded passwords (excluindo secret names)
+          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "external:" | grep -v "secrets:" | grep -v "conexao-de-sorte-.*-password:"; then
+            echo "❌ Found potential hardcoded passwords"
+            exit 1
+          else
+            echo "✅ No hardcoded passwords found"
+          fi
+          # Verificar fail-safe pattern
+          if grep -q "FATAL.*refusing to start" docker-compose.yml; then
+            echo "✅ Fail-safe security pattern implemented"
+          else
+            echo "⚠️ Fail-safe pattern recommended but not critical"
+          fi
+          # Verificar exposição Redis (seguindo padrão RabbitMQ que funcionou)
+          if grep -E "^\s*ports:" docker-compose.yml; then
+            echo "⚠️ WARNING: Redis may have exposed ports - ensure firewall protection"
+            echo "📝 Note: Following RabbitMQ success pattern (commit 66154f5)"
+          else
+            echo "✅ No ports exposed - maximum security (overlay network only)"
+          fi
 
       - name: Validate YAML files
         run: |
@@ -118,23 +133,48 @@ jobs:
       - name: Validation completed
         run: |
           echo "✅ Validação concluída - pronto para deploy"
-
-
   deploy-selfhosted:
     needs: validate-and-build
-    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
+    runs-on: [ self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura ]
     timeout-minutes: 15
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4.3.0
+      - name: Checkout
+        uses: actions/checkout@v4.3.0
         with:
           clean: true
           fetch-depth: 1
 
+      - name: 🔍 Diagnósticos iniciais
+        run: |
+          echo "🔍 Verificando arquivos necessários..."
+          for required_file in "docker-compose.yml"; do
+            if [[ -f "$required_file" ]]; then
+              echo "✅ $required_file encontrado"
+            else
+              echo "❌ $required_file NÃO encontrado"
+              exit 1
+            fi
+          done
+          echo "📂 Validando diretórios críticos..."
+          required_dirs=()
+          if (( ${#required_dirs[@]} )); then
+            for required_dir in "${required_dirs[@]}"; do
+              if [[ -d "$required_dir" ]]; then
+                echo "✅ Diretório $required_dir existe"
+              else
+                echo "⚠️ Diretório $required_dir não existe - criando..."
+                mkdir -p "$required_dir"
+              fi
+            done
+          else
+            echo "ℹ️ Nenhum diretório local obrigatório para Redis"
+          fi
       - name: 🔐 Azure Login (OIDC)
+        if: ${{ needs.validate-and-build.outputs.has_azure_creds == 'true' }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -188,7 +228,6 @@ jobs:
           password_file="$RUNNER_TEMP/redis_password"
           printf '%s\n' "$password" > "$password_file"
           chmod 600 "$password_file"
-
       - name: Deploy Redis Infrastructure
         run: |
           set -Eeuo pipefail
@@ -253,7 +292,6 @@ jobs:
           docker stack deploy -c docker-compose.yml "$STACK_NAME"
 
           echo "✅ Deploy concluído!"
-
       - name: Health Check Redis (Non-blocking)
         run: |
           echo "🏥 Verificando saúde do Redis..."
@@ -293,3 +331,33 @@ jobs:
           docker service ps "${STACK_NAME}_redis" --no-trunc --format "table {{.Name}}\t{{.CurrentState}}\t{{.Error}}" || true
 
           echo "ℹ️ Health check concluído (informativo apenas - não bloqueia pipeline)"
+      - name: Connectivity Validation
+        run: |
+          echo "🌐 Validando conectividade do Redis..."
+          # Verificar se o serviço está listado no Swarm
+          if docker service ls | grep -q "${STACK_NAME}_redis"; then
+            echo "✅ Serviço Redis encontrado no Swarm"
+          else
+            echo "❌ Serviço Redis não encontrado no Swarm"
+            exit 1
+          fi
+          # Verificar se está na rede correta
+          if docker network inspect "$DOCKER_NETWORK_NAME" | grep -q redis; then
+            echo "✅ Redis conectado à rede overlay"
+          else
+            echo "⚠️ Redis pode não estar na rede overlay correta"
+          fi
+          # Verificar endpoints específicos
+          REDIS_CONTAINER=$(docker ps -q -f name="${STACK_NAME}_redis" | head -1)
+          if [ -n "$REDIS_CONTAINER" ]; then
+            # Testar Redis port
+            if docker exec "$REDIS_CONTAINER" ss -tuln 2>/dev/null | grep -q ":6379"; then
+              echo "✅ Redis port ativo (porta 6379)"
+            else
+              echo "ℹ️ Redis port não detectado"
+            fi
+          fi
+          echo "📊 Status final dos serviços:"
+          docker service ls --filter name="${STACK_NAME}_*" --format "table {{.Name}}\t{{.Replicas}}\t{{.Image}}"
+          echo "🔍 Status detalhado do serviço Redis:"
+          docker service ps "${STACK_NAME}_redis" --no-trunc || true
