@@ -224,21 +224,7 @@ jobs:
             trap cleanup EXIT
             printf '%s' "$password" > "$tmp_file"
             if docker secret ls --format '{{.Name}}' | grep -Fxq "$secret_name"; then
-              # Verificar se secret está em uso antes de tentar remover
-              if docker service ls --format '{{.Name}}' | xargs -I {} docker service inspect {} --format '{{range .Spec.TaskTemplate.ContainerSpec.Secrets}}{{.SecretName}} {{end}}' 2>/dev/null | grep -q "$secret_name"; then
-                echo "ℹ️ Secret '$secret_name' está em uso por outros serviços - mantendo existente"
-              else
-                echo "♻️ Atualizando secret '$secret_name'"
-                docker secret rm "$secret_name"
-                # aguardar remoção para evitar conflitos
-                for _ in $(seq 1 12); do
-                  if ! docker secret ls --format '{{.Name}}' | grep -Fxq "$secret_name"; then
-                    break
-                  fi
-                  sleep 2
-                done
-                docker secret create "$secret_name" "$tmp_file"
-              fi
+              echo "ℹ️ Secret '$secret_name' já existe - utilizando existente"
             else
               echo "🔑 Criando secret '$secret_name'"
               docker secret create "$secret_name" "$tmp_file"
