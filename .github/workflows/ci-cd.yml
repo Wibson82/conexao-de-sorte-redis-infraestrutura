@@ -43,11 +43,11 @@ jobs:
       - name: 🔍 Validar identificadores Azure (vars)
         id: check_secrets
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
-          AZURE_KEYVAULT_ENDPOINT: ${{ secrets.AZURE_KEYVAULT_ENDPOINT }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_KEYVAULT_ENDPOINT: ${{ vars.AZURE_KEYVAULT_ENDPOINT || secrets.AZURE_KEYVAULT_ENDPOINT }}
+          AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME || secrets.AZURE_KEYVAULT_NAME }}
         run: |
           set -Eeuo pipefail
           missing=()
@@ -60,19 +60,23 @@ jobs:
             printf '❌ GitHub Secrets obrigatórios ausentes: %s\n' "${missing[*]}"
             exit 1
           fi
-          echo "✅ Identificadores Azure configurados via secrets"
+          echo "✅ Identificadores Azure configurados via vars (fallback para secrets)"
           echo "has_azure_creds=true" >> "$GITHUB_OUTPUT"
-          # Key Vault opcional para Redis (infraestrutura simples)
-          if [[ -n "${AZURE_KEYVAULT_NAME:-}" ]]; then
+
+          # Key Vault opcional para Redis - verificar ENDPOINT primeiro, depois NAME (migração segura)
+          if [[ -n "${AZURE_KEYVAULT_ENDPOINT:-}" ]]; then
+            echo "✅ AZURE_KEYVAULT_ENDPOINT configurado via vars"
             echo "has_keyvault=true" >> "$GITHUB_OUTPUT"
+            # Extrair nome do endpoint para compatibilidade
+            KEYVAULT_NAME=$(echo "$AZURE_KEYVAULT_ENDPOINT" | sed 's|https://\(.*\)\.vault\.azure\.net/.*|\1|')
+            echo "keyvault_name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${AZURE_KEYVAULT_NAME:-}" ]]; then
+            echo "✅ AZURE_KEYVAULT_NAME configurado via vars (fallback)"
+            echo "has_keyvault=true" >> "$GITHUB_OUTPUT"
+            echo "keyvault_name=$AZURE_KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
           else
+            echo "ℹ️ Nenhum Key Vault configurado - Redis não requer segredos complexos"
             echo "has_keyvault=false" >> "$GITHUB_OUTPUT"
-            echo 'ℹ️ Key Vault não configurado (Redis não requer segredos complexos)'
-          fi
-          if [[ -z "${AZURE_KEYVAULT_ENDPOINT:-}" ]]; then
-            echo 'ℹ️ AZURE_KEYVAULT_ENDPOINT não definido (usando endpoint padrão)'
-          else
-            echo '✅ Endpoint customizado definido'
           fi
       - name: Validate Docker Compose
         run: |
