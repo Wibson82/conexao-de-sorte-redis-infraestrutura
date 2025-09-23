@@ -46,8 +46,8 @@ jobs:
 
       - name: Security Validation - No Hardcoded Passwords
         run: |
-          # Verificar se não há hardcoded passwords
-          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "external:"; then
+          # Verificar se não há hardcoded passwords (excluindo secret names)
+          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "external:" | grep -v "secrets:" | grep -v "conexao-de-sorte-.*-password:"; then
             echo "❌ Found potential hardcoded passwords"
             exit 1
           else
