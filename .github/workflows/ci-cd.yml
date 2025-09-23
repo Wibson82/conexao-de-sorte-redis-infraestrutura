@@ -1,6 +1,10 @@
-name: 🔴 Redis V2 Validation (Ubuntu Workaround)
+name: 🔴 Redis Infrastructure CI/CD
 
 on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -12,14 +16,14 @@ env:
   TZ: America/Sao_Paulo
 
 jobs:
-  validate-redis-v2:
-    runs-on: ubuntu-latest  # WORKAROUND: srv649924 unavailable
+  validate-security:
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4.3.0
 
-      - name: 🔐 Azure Login (OIDC) - WORKING PATTERN
+      - name: 🔐 Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -32,71 +36,139 @@ jobs:
           az account show --output table
           echo "✅ Azure OIDC working with secrets.AZURE_* pattern"
 
-      - name: 🔍 Validate Redis V2 Configuration
+      - name: 🔍 Security Validation
         run: |
-          echo "🔍 Validating Redis V2 security fixes..."
+          echo "🔍 Validating Redis security configuration..."
 
-          # Check docker-compose.yml for security
-          if [[ -f docker-compose.yml ]]; then
-            echo "✅ docker-compose.yml found"
-
-            # Check for hardcoded passwords (should find NONE)
-            if grep -r "defaultpass\|redisdefaultpassword" docker-compose.yml; then
-              echo "❌ SECURITY VIOLATION: Hardcoded passwords found"
-              exit 1
-            fi
-            echo "✅ No hardcoded passwords found"
-
-            # Validate fail-fast security pattern
-            if grep -q "FATAL.*refusing to start" docker-compose.yml; then
-              echo "✅ Fail-fast security pattern implemented"
-            else
-              echo "⚠️ Fail-fast pattern not found"
-            fi
-
-            # Validate docker compose syntax
-            docker compose -f docker-compose.yml config -q
-            echo "✅ Docker Compose syntax valid"
-          else
+          # Check docker-compose.yml exists
+          if [[ ! -f docker-compose.yml ]]; then
             echo "❌ docker-compose.yml not found"
             exit 1
           fi
+          echo "✅ docker-compose.yml found"
 
-      - name: 🔍 Validate Workflow Security
+          # Check for hardcoded passwords
+          if grep -rE "(password|secret)[[:space:]]*:[[:space:]]*['\"][^$\{]" . | grep -v "secrets\." | grep -v "GITHUB_" | grep -v "grep -" | grep -v ".git/"; then
+            echo "❌ SECURITY VIOLATION: Hardcoded secrets found"
+            exit 1
+          fi
+          echo "✅ No hardcoded secrets found"
+
+          # Validate docker compose syntax
+          docker compose -f docker-compose.yml config -q
+          echo "✅ Docker Compose syntax valid"
+
+  deploy-redis:
+    needs: validate-security
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4.3.0
+
+      - name: 🔐 Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🗝️ Fetch Azure Key Vault Secrets
         run: |
-          echo "🔍 Validating ci-cd.yml..."
+          echo "🔑 Fetching secrets from Azure Key Vault..."
 
-          if [[ -f .github/workflows/ci-cd.yml ]]; then
-            echo "✅ ci-cd.yml found"
+          # Function to get secret with fallback
+          get_secret() {
+            local secret_name="$1"
+            local vault_endpoint="${{ secrets.AZURE_KEYVAULT_ENDPOINT }}"
+            local vault_name="${{ secrets.AZURE_KEYVAULT_NAME }}"
 
-            # Check for actual hardcoded secrets (not validation code)
-            if grep -rE "(password|secret)[[:space:]]*:[[:space:]]*['\"][^$\{]" .github/workflows/ci-cd.yml | grep -v "secrets\." | grep -v "GITHUB_" | grep -v "grep -" | grep -v "if grep"; then
-              echo "❌ SECURITY VIOLATION: Hardcoded secrets in workflow"
-              exit 1
+            # Try with endpoint first
+            if [[ -n "$vault_endpoint" ]]; then
+              echo "Trying with vault endpoint: $vault_endpoint"
+              az keyvault secret show --vault-name "$vault_endpoint" --name "$secret_name" --query value -o tsv 2>/dev/null && return 0
             fi
-            echo "✅ No hardcoded secrets in workflow"
 
-            # Validate Azure OIDC pattern
-            if grep -q "secrets\.AZURE_CLIENT_ID" .github/workflows/ci-cd.yml; then
-              echo "✅ Correct Azure OIDC pattern (secrets.AZURE_*)"
-            else
-              echo "❌ Incorrect Azure OIDC pattern"
-              exit 1
+            # Fallback to vault name
+            if [[ -n "$vault_name" ]]; then
+              echo "Trying with vault name: $vault_name"
+              az keyvault secret show --vault-name "$vault_name" --name "$secret_name" --query value -o tsv 2>/dev/null && return 0
             fi
-          else
-            echo "❌ ci-cd.yml not found"
+
+            echo "❌ Failed to fetch secret: $secret_name"
+            return 1
+          }
+
+          # Get Redis password
+          REDIS_PASSWORD=$(get_secret "conexao-de-sorte-redis-password")
+          if [[ -z "$REDIS_PASSWORD" ]]; then
+            echo "❌ Failed to get Redis password from Key Vault"
             exit 1
           fi
 
-      - name: 🎯 Redis V2 Validation Summary
+          # Check if secret already exists
+          if docker secret ls | grep -q "conexao-de-sorte-redis-password"; then
+            echo "✅ Redis password secret already exists"
+            echo "ℹ️ Skipping secret creation (using existing secret)"
+          else
+            echo "🔑 Creating Redis password secret..."
+            echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
+            echo "✅ Redis password secret created"
+          fi
+
+      - name: 🔴 Deploy Redis Stack
         run: |
-          echo "📊 REDIS V2 VALIDATION COMPLETE"
-          echo "==============================="
-          echo "✅ Security: All hardcoded passwords eliminated"
-          echo "✅ Workflow: ci-cd.yml pattern validated"
-          echo "✅ Azure OIDC: secrets.AZURE_* pattern working"
-          echo "✅ Docker Compose: Syntax and security validated"
-          echo ""
-          echo "🎯 CONCLUSION: Redis V2 security fixes are READY for deployment"
-          echo "⚠️ BLOCKER: srv649924 runner unavailable"
-          echo "🔧 WORKAROUND: This validation runs on ubuntu-latest successfully"
+          echo "🚀 Deploying Redis infrastructure..."
+
+          # Remove existing stack if exists
+          if docker stack ls | grep -q "conexao-redis"; then
+            echo "🔄 Removing existing Redis stack..."
+            docker stack rm conexao-redis
+
+            # Wait for complete removal
+            echo "⏳ Waiting for stack removal..."
+            timeout 120 bash -c 'while docker stack ls | grep -q "conexao-redis"; do sleep 2; done' || true
+            sleep 5
+          fi
+
+          # Clean up orphaned configs and secrets
+          echo "🧹 Cleaning up orphaned resources..."
+          docker config ls --format "table {{.Name}}\t{{.CreatedAt}}" | grep "conexao-redis" | awk '{print $1}' | xargs -r docker config rm 2>/dev/null || true
+
+          # Deploy new stack
+          echo "🚀 Deploying new Redis stack..."
+          docker stack deploy -c docker-compose.yml conexao-redis
+
+          echo "✅ Redis stack deployment initiated"
+
+      - name: 🔍 Verify Deployment
+        run: |
+          echo "🔍 Verifying Redis deployment..."
+
+          # Wait for service to be ready
+          echo "⏳ Waiting for Redis service..."
+          timeout 180 bash -c '
+            while true; do
+              if docker service ls | grep conexao-redis | grep -q "1/1"; then
+                echo "✅ Redis service is running"
+                break
+              fi
+              echo "⏳ Waiting for Redis service to start..."
+              sleep 5
+            done
+          ' || {
+            echo "❌ Redis service failed to start within timeout"
+            echo "📋 Service status:"
+            docker service ls | grep conexao-redis || echo "No Redis service found"
+            echo "📋 Service logs:"
+            docker service logs conexao-redis_redis --tail 20 2>/dev/null || echo "No logs available"
+            exit 1
+          }
+
+          # Final status
+          echo "📊 Final deployment status:"
+          docker stack ls | grep conexao-redis
+          docker service ls | grep conexao-redis
+
+          echo "🎉 Redis infrastructure deployed successfully!"
