@@ -107,16 +107,15 @@ jobs:
             exit 1
           fi
 
-          # Create Docker secret
-          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password - 2>/dev/null || \
-          echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password - --label "update=$(date +%s)" || {
-            echo "🔄 Updating existing secret..."
-            docker secret rm conexao-de-sorte-redis-password 2>/dev/null || true
-            sleep 2
+          # Check if secret already exists
+          if docker secret ls | grep -q "conexao-de-sorte-redis-password"; then
+            echo "✅ Redis password secret already exists"
+            echo "ℹ️ Skipping secret creation (using existing secret)"
+          else
+            echo "🔑 Creating Redis password secret..."
             echo "$REDIS_PASSWORD" | docker secret create conexao-de-sorte-redis-password -
-          }
-
-          echo "✅ Redis password secret created/updated"
+            echo "✅ Redis password secret created"
+          fi
 
       - name: 🔴 Deploy Redis Stack
         run: |
