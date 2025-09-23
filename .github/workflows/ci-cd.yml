@@ -64,27 +64,27 @@ jobs:
 
       - name: 🔍 Validate Workflow Security
         run: |
-          echo "🔍 Validating ci-cd-secure.yml..."
+          echo "🔍 Validating ci-cd.yml..."
 
-          if [[ -f .github/workflows/ci-cd-secure.yml ]]; then
-            echo "✅ ci-cd-secure.yml found"
+          if [[ -f .github/workflows/ci-cd.yml ]]; then
+            echo "✅ ci-cd.yml found"
 
             # Check for actual hardcoded secrets (not validation code)
-            if grep -rE "(password|secret)[[:space:]]*:[[:space:]]*['\"][^$\{]" .github/workflows/ci-cd-secure.yml | grep -v "secrets\." | grep -v "GITHUB_" | grep -v "grep -" | grep -v "if grep"; then
+            if grep -rE "(password|secret)[[:space:]]*:[[:space:]]*['\"][^$\{]" .github/workflows/ci-cd.yml | grep -v "secrets\." | grep -v "GITHUB_" | grep -v "grep -" | grep -v "if grep"; then
               echo "❌ SECURITY VIOLATION: Hardcoded secrets in workflow"
               exit 1
             fi
             echo "✅ No hardcoded secrets in workflow"
 
             # Validate Azure OIDC pattern
-            if grep -q "secrets\.AZURE_CLIENT_ID" .github/workflows/ci-cd-secure.yml; then
+            if grep -q "secrets\.AZURE_CLIENT_ID" .github/workflows/ci-cd.yml; then
               echo "✅ Correct Azure OIDC pattern (secrets.AZURE_*)"
             else
               echo "❌ Incorrect Azure OIDC pattern"
               exit 1
             fi
           else
-            echo "❌ ci-cd-secure.yml not found"
+            echo "❌ ci-cd.yml not found"
             exit 1
           fi
 
@@ -93,7 +93,7 @@ jobs:
           echo "📊 REDIS V2 VALIDATION COMPLETE"
           echo "==============================="
           echo "✅ Security: All hardcoded passwords eliminated"
-          echo "✅ Workflow: ci-cd-secure.yml pattern validated"
+          echo "✅ Workflow: ci-cd.yml pattern validated"
           echo "✅ Azure OIDC: secrets.AZURE_* pattern working"
           echo "✅ Docker Compose: Syntax and security validated"
           echo ""
