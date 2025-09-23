@@ -31,7 +31,7 @@ services:
         exit 1;
       fi;
       echo "Starting Redis with enhanced security configuration...";
-      redis-server /etc/redis/redis.conf --requirepass "$$REDIS_PASS"
+      redis-server --requirepass "$$REDIS_PASS" --bind 0.0.0.0 --protected-mode yes --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
       '
     networks:
       conexao-network-swarm:
@@ -40,7 +40,6 @@ services:
           - redis
     volumes:
       - redis_data:/data
-      - ./redis.conf:/etc/redis/redis.conf:ro
     secrets:
       - conexao-de-sorte-redis-password
     healthcheck:
