@@ -1,0 +1,124 @@
+name: "🔴 Redis Test Step 2 - Azure + Key Vault"
+
+on:
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: redis-infrastructure
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test-azure-connection:
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.3.0
+        with:
+          clean: true
+          fetch-depth: 1
+
+      - name: 🔍 Verificar Azure Secrets
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+        run: |
+          echo "🔍 Verificando disponibilidade dos secrets Azure..."
+          missing=()
+          for var in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+            if [[ -z "${!var:-}" ]]; then
+              missing+=("$var")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            printf '❌ GitHub Secrets obrigatórios ausentes: %s\n' "${missing[*]}"
+            exit 1
+          fi
+          echo "✅ Todos os secrets Azure necessários estão configurados"
+
+          if [[ -n "${AZURE_KEYVAULT_NAME:-}" ]]; then
+            echo "✅ AZURE_KEYVAULT_NAME: ${AZURE_KEYVAULT_NAME}"
+          else
+            echo "❌ AZURE_KEYVAULT_NAME não configurado"
+            exit 1
+          fi
+
+      - name: 🔐 Teste Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 🧪 Teste Conexão Azure
+        run: |
+          echo "🔍 Testando conexão Azure..."
+          echo "📍 Versão Azure CLI: $(az --version | head -1)"
+          echo "📍 Conta atual:"
+          az account show --output table
+          echo "📍 Subscription:"
+          az account list --query "[?state=='Enabled'].{Name:name, SubscriptionId:id}" --output table
+          echo "✅ Conexão Azure funcionando!"
+
+      - name: 🗝️ Teste Key Vault Access
+        env:
+          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+        run: |
+          echo "🔍 Testando acesso ao Key Vault..."
+          echo "📍 Key Vault: ${AZURE_KEYVAULT_NAME}"
+
+          # Listar secrets disponíveis
+          echo "📍 Secrets disponíveis no Key Vault:"
+          az keyvault secret list --vault-name "${AZURE_KEYVAULT_NAME}" --query "[].name" --output table
+
+          # Verificar se o secret do Redis existe
+          echo "🔑 Verificando secret específico do Redis..."
+          if az keyvault secret show --vault-name "${AZURE_KEYVAULT_NAME}" --name "conexao-de-sorte-redis-password" --query "name" -o tsv > /dev/null 2>&1; then
+            echo "✅ Secret 'conexao-de-sorte-redis-password' encontrado"
+          else
+            echo "❌ Secret 'conexao-de-sorte-redis-password' não encontrado"
+            exit 1
+          fi
+
+      - name: 🔐 Teste Obtenção do Secret
+        env:
+          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+        run: |
+          echo "🔍 Testando obtenção do secret Redis..."
+          password=$(az keyvault secret show \
+            --vault-name "${AZURE_KEYVAULT_NAME}" \
+            --name "conexao-de-sorte-redis-password" \
+            --query value -o tsv)
+
+          if [[ -z "$password" ]]; then
+            echo "❌ Não foi possível obter o secret"
+            exit 1
+          fi
+
+          echo "::add-mask::$password"
+          echo "✅ Secret obtido com sucesso (${#password} caracteres)"
+
+          # Validar tamanho mínimo
+          if [[ ${#password} -lt 12 ]]; then
+            echo "❌ Password muito curto (mínimo 12 caracteres)"
+            exit 1
+          fi
+
+          echo "✅ Validação do secret concluída com sucesso!"
+
+      - name: ✅ Resumo do Teste
+        run: |
+          echo "📊 Resumo dos testes Step 2:"
+          echo "✅ Runner self-hosted funcionando"
+          echo "✅ Azure OIDC authentication funcionando"
+          echo "✅ Key Vault acessível"
+          echo "✅ Secret Redis disponível e válido"
+          echo "🎉 Step 2 concluído com sucesso!"
