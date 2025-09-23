@@ -1,0 +1,33 @@
+name: "🔴 Redis Test Step 1 - Runner Connection"
+
+on:
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: redis-infrastructure
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  test-runner-connection:
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Test Runner Connection
+        run: |
+          echo "🔍 Testando conexão com runner self-hosted..."
+          echo "📍 Hostname: $(hostname)"
+          echo "📍 User: $(whoami)"
+          echo "📍 PWD: $(pwd)"
+          echo "📍 OS: $(uname -a)"
+          echo "📍 Docker version: $(docker --version)"
+          echo "📍 Docker status:"
+          docker info | head -20
+          echo "📍 Docker Swarm status:"
+          docker node ls || echo "Não é manager node"
+          echo "✅ Runner conexão testada com sucesso!"
