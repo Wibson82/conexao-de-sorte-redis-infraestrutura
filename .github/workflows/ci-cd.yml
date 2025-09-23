@@ -1,12 +1,11 @@
 name: "🔴 Redis Infrastructure – CI/CD Pipeline"
 
-# PIPELINE TEMPORARIAMENTE DESABILITADO PARA TESTES INCREMENTAIS
-# on:
-#   push:
-#     branches: [ main ]
-#   pull_request:
-#     branches: [ main ]
-#   workflow_dispatch:
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
 
 env:
   SERVICE_NAME: redis-infrastructure
