@@ -60,7 +60,7 @@ jobs:
 
   deploy-redis:
     needs: validate-security
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura]
     if: github.ref == 'refs/heads/main'
     timeout-minutes: 15
     steps:
