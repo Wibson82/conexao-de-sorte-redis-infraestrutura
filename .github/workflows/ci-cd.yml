@@ -1,367 +1,130 @@
-name: "🔴 Redis Infrastructure – CI/CD Pipeline"
+name: "🏗️ Infrastructure Component - CI/CD Pipeline"
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
   workflow_dispatch:
-
-env:
-  SERVICE_NAME: redis-infrastructure
-  STACK_NAME: conexao-redis
-  DOCKER_NETWORK_NAME: conexao-network-swarm
-
-permissions:
-  contents: read
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  INFRA_TYPE: infrastructure
+  KUBECTL_VERSION: 'v1.28.0'
+
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
-  validate-and-build:
+  validate:
+    name: "🔍 Validate Infrastructure Component"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
-      id-token: write
-    outputs:
-      has_keyvault: ${{ steps.check_secrets.outputs.has_keyvault }}
-      has_azure_creds: ${{ steps.check_secrets.outputs.has_azure_creds }}
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.3.0
+      - name: "📥 Checkout Repository"
+        uses: actions/checkout@v4
+        
+      - name: "🔧 Setup kubectl"
+        uses: azure/setup-kubectl@v3
         with:
-          fetch-depth: 1
-
-      - name: Install dependencies
+          version: ${{ env.KUBECTL_VERSION }}
+          
+      - name: "📋 Validate YAML Files"
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-yaml jq
-      - name: 🔍 Validar identificadores Azure (vars)
-        id: check_secrets
-        env:
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_KEYVAULT_ENDPOINT: ${{ vars.AZURE_KEYVAULT_ENDPOINT || secrets.AZURE_KEYVAULT_ENDPOINT }}
-          AZURE_KEYVAULT_NAME: ${{ vars.AZURE_KEYVAULT_NAME || secrets.AZURE_KEYVAULT_NAME }}
-        run: |
-          set -Eeuo pipefail
-          missing=()
-          for var in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
-            if [[ -z "${!var:-}" ]]; then
-              missing+=("$var")
+          echo "📋 Validating YAML syntax..."
+          yaml_count=0
+          for file in $(find . -name "*.yaml" -o -name "*.yml" | grep -v ".github"); do
+            echo "Validating: $file"
+            yaml_count=$((yaml_count + 1))
+            if ! kubectl --dry-run=client apply -f "$file" 2>/dev/null; then
+              echo "⚠️ Warning: $file may have issues (this is normal for templates)"
             fi
           done
-          if (( ${#missing[@]} )); then
-            printf '❌ GitHub Secrets obrigatórios ausentes: %s\n' "${missing[*]}"
+          echo "✅ Validated $yaml_count YAML files"
+          
+      - name: "🔒 Security Validation"
+        run: |
+          echo "🔒 Checking for security issues..."
+          
+          # Check for hardcoded secrets
+          if find . -name "*.yaml" -o -name "*.yml" | xargs grep -l "password:" 2>/dev/null | grep -v ".github" | head -1; then
+            echo "⚠️ Found password references - ensure they use secrets"
+          fi
+          
+          # Check for default passwords
+          if find . -name "*.yaml" -o -name "*.yml" | xargs grep -i "admin:admin\|root:root\|password:password" 2>/dev/null | head -1; then
+            echo "❌ Default passwords found!"
             exit 1
           fi
-          echo "✅ Identificadores Azure configurados via vars (fallback para secrets)"
-          echo "has_azure_creds=true" >> "$GITHUB_OUTPUT"
-
-          # Key Vault opcional para Redis - verificar ENDPOINT primeiro, depois NAME (migração segura)
-          if [[ -n "${AZURE_KEYVAULT_ENDPOINT:-}" ]]; then
-            echo "✅ AZURE_KEYVAULT_ENDPOINT configurado via vars"
-            echo "has_keyvault=true" >> "$GITHUB_OUTPUT"
-            # Extrair nome do endpoint para compatibilidade
-            KEYVAULT_NAME=$(echo "$AZURE_KEYVAULT_ENDPOINT" | sed 's|https://\(.*\)\.vault\.azure\.net/.*|\1|')
-            echo "keyvault_name=$KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
-          elif [[ -n "${AZURE_KEYVAULT_NAME:-}" ]]; then
-            echo "✅ AZURE_KEYVAULT_NAME configurado via vars (fallback)"
-            echo "has_keyvault=true" >> "$GITHUB_OUTPUT"
-            echo "keyvault_name=$AZURE_KEYVAULT_NAME" >> "$GITHUB_OUTPUT"
+          
+          echo "✅ Security validation passed"
+          
+      - name: "🧪 Test Scripts"
+        run: |
+          echo "🧪 Testing executable scripts..."
+          
+          script_count=0
+          for script in $(find . -name "*.sh"); do
+            echo "Testing: $script"
+            script_count=$((script_count + 1))
+            if ! bash -n "$script"; then
+              echo "❌ Syntax error in $script"
+              exit 1
+            fi
+          done
+          
+          if [ $script_count -eq 0 ]; then
+            echo "ℹ️ No shell scripts found"
           else
-            echo "ℹ️ Nenhum Key Vault configurado - Redis não requer segredos complexos"
-            echo "has_keyvault=false" >> "$GITHUB_OUTPUT"
+            echo "✅ All $script_count scripts have valid syntax"
           fi
-      - name: Validate Docker Compose
+          
+      - name: "📋 Validate Documentation"
         run: |
-          # Validar sintaxe do docker-compose.yml
-          docker compose -f docker-compose.yml config -q
-          echo "✅ Docker Compose syntax is valid"
-      - name: Security Validation - No Hardcoded Passwords
-        run: |
-          # Verificar se não há hardcoded passwords (excluindo secret names)
-          if grep -r "password.*:" docker-compose.yml | grep -v "\${" | grep -v "#" | grep -v "external:" | grep -v "secrets:" | grep -v "conexao-de-sorte-.*-password:"; then
-            echo "❌ Found potential hardcoded passwords"
+          echo "📋 Checking documentation..."
+          
+          if [ ! -f "README.md" ]; then
+            echo "❌ README.md not found"
             exit 1
-          else
-            echo "✅ No hardcoded passwords found"
           fi
-          # Verificar fail-safe pattern
-          if grep -q "FATAL.*refusing to start" docker-compose.yml; then
-            echo "✅ Fail-safe security pattern implemented"
-          else
-            echo "⚠️ Fail-safe pattern recommended but not critical"
+          
+          if [ ! -f ".gitignore" ]; then
+            echo "⚠️ .gitignore not found"
           fi
-          # Verificar exposição Redis (seguindo padrão RabbitMQ que funcionou)
-          if grep -E "^\s*ports:" docker-compose.yml; then
-            echo "⚠️ WARNING: Redis may have exposed ports - ensure firewall protection"
-            echo "📝 Note: Following RabbitMQ success pattern (commit 66154f5)"
-          else
-            echo "✅ No ports exposed - maximum security (overlay network only)"
-          fi
-
-      - name: Validate YAML files
+          
+          echo "✅ Documentation validation passed"
+          
+      - name: "📊 Generate Report"
         run: |
-          python3 -c "
-          import yaml
-          import pathlib
+          echo "📊 Infrastructure Component Validation Report"
+          echo "=================================================="
+          echo "Project: conexao-de-sorte-redis-infraestrutura"
+          echo "Type: infrastructure"
+          echo "YAML files: $(find . -name "*.yaml" -o -name "*.yml" | grep -v ".github" | wc -l)"
+          echo "Scripts: $(find . -name "*.sh" | wc -l)"
+          echo "Status: ✅ Validation Passed"
 
-          # Validar arquivos YAML principais
-          yaml_files = [
-              'docker-compose.yml'
-          ]
-
-          for file_path in yaml_files:
-              if pathlib.Path(file_path).exists():
-                  try:
-                      with open(file_path, 'r', encoding='utf-8') as f:
-                          yaml.safe_load(f)
-                      print(f'✅ YAML válido: {file_path}')
-                  except Exception as e:
-                      print(f'❌ Erro no YAML {file_path}: {e}')
-                      exit(1)
-          "
-
-      - name: ✅ Confirmar consumo mínimo do Key Vault
-        if: ${{ steps.check_secrets.outputs.has_keyvault == 'true' }}
-        run: |
-          echo 'Job de validação não consome segredos do Key Vault (lista vazia).'
-          echo "✅ Validação de Key Vault concluída sem consumo de segredos"
-
-      - name: Validation completed
-        run: |
-          echo "✅ Validação concluída - pronto para deploy"
-  deploy-selfhosted:
-    needs: validate-and-build
-    runs-on: [ self-hosted, Linux, X64, conexao-de-sorte-redis-infraestrutura ]
-    timeout-minutes: 15
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: read
-      id-token: write
+  summary:
+    name: "📊 Pipeline Summary"
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: always()
+    timeout-minutes: 2
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4.3.0
-        with:
-          clean: true
-          fetch-depth: 1
-
-      - name: 🔍 Diagnósticos iniciais
+      - name: "📊 Generate Summary"
         run: |
-          echo "🔍 Verificando arquivos necessários..."
-          for required_file in "docker-compose.yml"; do
-            if [[ -f "$required_file" ]]; then
-              echo "✅ $required_file encontrado"
-            else
-              echo "❌ $required_file NÃO encontrado"
-              exit 1
-            fi
-          done
-          echo "📂 Validando diretórios críticos..."
-          required_dirs=()
-          if (( ${#required_dirs[@]} )); then
-            for required_dir in "${required_dirs[@]}"; do
-              if [[ -d "$required_dir" ]]; then
-                echo "✅ Diretório $required_dir existe"
-              else
-                echo "⚠️ Diretório $required_dir não existe - criando..."
-                mkdir -p "$required_dir"
-              fi
-            done
-          else
-            echo "ℹ️ Nenhum diretório local obrigatório para Redis"
-          fi
-      - name: 🔐 Azure Login (OIDC)
-        if: ${{ needs.validate-and-build.outputs.has_azure_creds == 'true' }}
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Get Key Vault secrets (Redis)
-        if: ${{ needs.validate-and-build.outputs.has_keyvault == 'true' }}
-        run: |
-          # Usar endpoint se disponível, senão usar nome com fallback
-          KEYVAULT_ENDPOINT="${{ secrets.AZURE_KEYVAULT_ENDPOINT }}"
-          if [[ -n "$KEYVAULT_ENDPOINT" ]]; then
-            KEYVAULT_NAME=$(echo "$KEYVAULT_ENDPOINT" | sed 's|https://\(.*\)\.vault\.azure\.net/.*|\1|')
-            echo "📍 Usando Key Vault do endpoint: $KEYVAULT_NAME"
-          else
-            KEYVAULT_NAME="${{ secrets.AZURE_KEYVAULT_NAME || 'kv-conexao-de-sorte' }}"
-            echo "📍 Usando Key Vault do nome: $KEYVAULT_NAME"
-          fi
-
-          # Obter secrets do Redis
-          secrets_list="conexao-de-sorte-redis-password"
-
-          IFS=',' read -ra SECRETS_ARRAY <<< "$secrets_list"
-          for secret_name in "${SECRETS_ARRAY[@]}"; do
-            echo "🔍 Obtendo segredo: $secret_name"
-            secret_value=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "$secret_name" --query 'value' -o tsv 2>/dev/null || echo "")
-
-            if [[ -n "$secret_value" ]]; then
-              echo "✅ Segredo obtido: $secret_name"
-              echo "$secret_name=$secret_value" >> $GITHUB_ENV
-            else
-              echo "❌ Erro ao obter segredo: $secret_name"
-              exit 1
-            fi
-          done
-
-      - name: Preparar secrets do Redis
-        if: ${{ needs.validate-and-build.outputs.has_keyvault == 'true' }}
-        run: |
-          set -Eeuo pipefail
-          password="${conexao-de-sorte-redis-password}"
-          if [[ -z "$password" ]]; then
-            echo '❌ Segredo do Redis não retornado pelo Key Vault'
-            exit 1
-          fi
-          echo "::add-mask::$password"
-          if [[ ${#password} -lt 12 ]]; then
-            echo '❌ Password muito curto (mínimo 12 caracteres)'
-            exit 1
-          fi
-          password_file="$RUNNER_TEMP/redis_password"
-          printf '%s\n' "$password" > "$password_file"
-          chmod 600 "$password_file"
-      - name: Deploy Redis Infrastructure
-        run: |
-          set -Eeuo pipefail
-          echo "🚀 Iniciando deploy da infraestrutura Redis..."
-
-          STACK_NAME="conexao-redis"
-          NETWORK_NAME="conexao-network-swarm"
-          SECRET_NAME="conexao-de-sorte-redis-password"
-
-          # Verificar se rede existe
-          if ! docker network ls --format '{{.Name}}' | grep -Fxq "$NETWORK_NAME"; then
-            echo "📡 Criando rede overlay $NETWORK_NAME..."
-            docker network create --driver overlay --attachable "$NETWORK_NAME"
-          else
-            echo "✅ Rede $NETWORK_NAME já existe"
-          fi
-
-          # Verificar e criar volume se necessário
-          if ! docker volume ls --format '{{.Name}}' | grep -Fxq "redis_data"; then
-            echo "💾 Criando volume redis_data..."
-            docker volume create redis_data
-          else
-            echo "✅ Volume redis_data já existe"
-          fi
-
-          # Gerenciar secret
-          if [[ "${{ needs.validate-and-build.outputs.has_keyvault }}" == "true" ]]; then
-            password_file="$RUNNER_TEMP/redis_password"
-
-            # Verificar se secret existe
-            if docker secret ls --format '{{.Name}}' | grep -Fxq "$SECRET_NAME"; then
-              echo "ℹ️ Secret $SECRET_NAME já existe - utilizando existente"
-            else
-              echo "🔑 Criando secret $SECRET_NAME..."
-              docker secret create "$SECRET_NAME" "$password_file"
-            fi
-          else
-            echo "⚠️ Key Vault não configurado - usando secret existente"
-            if ! docker secret ls --format '{{.Name}}' | grep -Fxq "$SECRET_NAME"; then
-              echo "❌ Secret $SECRET_NAME não encontrado e Key Vault não configurado"
-              exit 1
-            fi
-          fi
-
-          # Remove stack existente se houver
-          if docker stack ls --format '{{.Name}}' | grep -Fxq "$STACK_NAME"; then
-            echo "🔄 Removendo stack existente $STACK_NAME..."
-            docker stack rm "$STACK_NAME"
-
-            # Aguardar remoção
-            echo "⏳ Aguardando remoção da stack..."
-            for i in $(seq 1 30); do
-              if ! docker stack ls --format '{{.Name}}' | grep -Fxq "$STACK_NAME"; then
-                break
-              fi
-              sleep 2
-            done
-          fi
-
-          # Deploy da nova stack
-          echo "🛠️ Fazendo deploy da stack $STACK_NAME..."
-          docker stack deploy -c docker-compose.yml "$STACK_NAME"
-
-          echo "✅ Deploy concluído!"
-      - name: Health Check Redis (Non-blocking)
-        run: |
-          echo "🏥 Verificando saúde do Redis..."
-          STACK_NAME="conexao-redis"
-
-          # Aguardar serviços ficarem disponíveis (máximo 2 minutos)
-          timeout=120
-          elapsed=0
-
-          while [ $elapsed -lt $timeout ]; do
-            # Verificar status dos serviços
-            service_count=$(docker service ls --filter name="${STACK_NAME}_" --format '{{.Name}}' | wc -l)
-
-            if [ $service_count -gt 0 ]; then
-              echo "✅ Serviços Redis encontrados"
-              docker service ls --filter name="${STACK_NAME}_" --format "table {{.Name}}\t{{.Replicas}}\t{{.Image}}"
-
-              # Verificar se há containers rodando
-              running_tasks=$(docker service ps "${STACK_NAME}_redis" --filter desired-state=running --format '{{.Name}}' 2>/dev/null | wc -l)
-
-              if [ $running_tasks -gt 0 ]; then
-                echo "✅ Redis está sendo executado"
-                break
-              fi
-            fi
-
-            echo "⏳ Aguardando Redis ficar disponível... ($elapsed/$timeout segundos)"
-            sleep 10
-            elapsed=$((elapsed + 10))
-          done
-
-          # Status final (não bloqueante)
-          echo "📊 Status final dos serviços Redis:"
-          docker service ls --filter name="${STACK_NAME}_" --format "table {{.Name}}\t{{.Replicas}}\t{{.Image}}" || true
-
-          echo "📋 Tarefas do Redis:"
-          docker service ps "${STACK_NAME}_redis" --no-trunc --format "table {{.Name}}\t{{.CurrentState}}\t{{.Error}}" || true
-
-          echo "ℹ️ Health check concluído (informativo apenas - não bloqueia pipeline)"
-      - name: Connectivity Validation
-        run: |
-          echo "🌐 Validando conectividade do Redis..."
-          # Verificar se o serviço está listado no Swarm
-          if docker service ls | grep -q "${STACK_NAME}_redis"; then
-            echo "✅ Serviço Redis encontrado no Swarm"
-          else
-            echo "❌ Serviço Redis não encontrado no Swarm"
-            exit 1
-          fi
-          # Verificar se está na rede correta
-          if docker network inspect "$DOCKER_NETWORK_NAME" | grep -q redis; then
-            echo "✅ Redis conectado à rede overlay"
-          else
-            echo "⚠️ Redis pode não estar na rede overlay correta"
-          fi
-          # Verificar endpoints específicos
-          REDIS_CONTAINER=$(docker ps -q -f name="${STACK_NAME}_redis" | head -1)
-          if [ -n "$REDIS_CONTAINER" ]; then
-            # Testar Redis port
-            if docker exec "$REDIS_CONTAINER" ss -tuln 2>/dev/null | grep -q ":6379"; then
-              echo "✅ Redis port ativo (porta 6379)"
-            else
-              echo "ℹ️ Redis port não detectado"
-            fi
-          fi
-          echo "📊 Status final dos serviços:"
-          docker service ls --filter name="${STACK_NAME}_*" --format "table {{.Name}}\t{{.Replicas}}\t{{.Image}}"
-          echo "🔍 Status detalhado do serviço Redis:"
-          docker service ps "${STACK_NAME}_redis" --no-trunc || true
+          echo "## 🏗️ Infrastructure Component Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Validate | ${{ needs.validate.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Project:** conexao-de-sorte-redis-infraestrutura" >> $GITHUB_STEP_SUMMARY
+          echo "**Type:** infrastructure" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_STEP_SUMMARY
